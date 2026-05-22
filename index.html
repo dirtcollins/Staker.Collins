@@ -1,0 +1,785 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Staker Collins Deal Dashboard</title>
+  <link rel="stylesheet" href="styles.css?v=prospect-media-20260522a">
+</head>
+<body>
+  <div id="loginScreen" style="display:none">
+    <div class="login-card">
+      <img class="login-logo" src="assets/staker-collins-development-logo.svg" alt="Staker Collins Development">
+      <h1 class="login-title">Staker Collins</h1>
+      <p class="login-sub">Deal Dashboard</p>
+      <form id="loginForm" autocomplete="off">
+        <label class="login-field">
+          Who are you?
+          <select id="loginName">
+            <option value="">Select your name...</option>
+            <option>Ashton Staker</option>
+            <option>Brent Staker</option>
+            <option>Nathan Staker</option>
+            <option>Nicole Staker</option>
+            <option>Brendan Collins</option>
+          </select>
+        </label>
+        <label class="login-field">
+          Password (your phone number)
+          <input id="loginPhone" type="password" inputmode="numeric" placeholder="Enter your phone number" autocomplete="off">
+        </label>
+        <p class="login-error" id="loginError" style="display:none"></p>
+        <button class="primary login-btn" type="submit" id="loginSubmit">Sign In</button>
+      </form>
+    </div>
+  </div>
+  <div class="app-shell">
+    <div class="nav-overlay" id="navOverlay"></div>
+    <aside class="sidebar">
+      <div class="side-brand">
+        <img src="assets/staker-collins-development-logo.svg" alt="Staker Collins Development">
+      </div>
+      <div class="nav-section-switcher" aria-label="Workspace section">
+        <button class="nav-section-tab active" type="button" data-nav-section="prospects">
+          <span class="section-icon" data-icon="search-user"></span>
+          Prospects
+        </button>
+        <button class="nav-section-tab" type="button" data-nav-section="owned">
+          <span class="section-icon" data-icon="home"></span>
+          Homes Owned
+        </button>
+      </div>
+      <button class="new-chat" id="newPropertyBtn" type="button"><span>+</span> New property</button>
+      <nav class="nav" aria-label="Workspace views">
+        <button class="nav-item active" type="button" data-view="dashboard" data-nav-section-item="prospects"><span class="nav-icon" data-icon="layout-grid"></span><span class="nav-label">Dashboard</span><span class="nav-count" data-nav-count="dashboard">0</span></button>
+        <button class="nav-item" type="button" data-view="pipeline" data-nav-section-item="prospects"><span class="nav-icon" data-icon="crosshair"></span><span class="nav-label">Pipeline</span><span class="nav-count" data-nav-count="pipeline">0</span></button>
+        <button class="nav-item" type="button" data-view="rankings" data-nav-section-item="prospects"><span class="nav-icon" data-icon="bar-chart"></span><span class="nav-label">Deal Ranking</span><span class="nav-count" data-nav-count="rankings">0</span></button>
+        <button class="nav-item" type="button" data-view="properties" data-nav-section-item="prospects"><span class="nav-icon" data-icon="house-chart"></span><span class="nav-label">Properties</span><span class="nav-count" data-nav-count="properties">0</span></button>
+        <button class="nav-item" type="button" data-view="calculator" data-nav-section-item="prospects"><span class="nav-icon" data-icon="calculator"></span><span class="nav-label">Offer Calculator</span><span class="nav-count" data-nav-count="calculator">0</span></button>
+        <button class="nav-item" type="button" data-view="scope" data-nav-section-item="prospects"><span class="nav-icon" data-icon="clipboard-list"></span><span class="nav-label">Construction Scope</span><span class="nav-count" data-nav-count="scope">0</span></button>
+        <button class="nav-item" type="button" data-view="documents" data-nav-section-item="prospects"><span class="nav-icon" data-icon="file-text"></span><span class="nav-label">Documents</span><span class="nav-count" data-nav-count="documents">0</span></button>
+        <button class="nav-item" type="button" data-view="prospectMedia" data-nav-section-item="prospects"><span class="nav-icon" data-icon="image"></span><span class="nav-label">Photos / Videos</span><span class="nav-count" data-nav-count="prospectMedia">0</span></button>
+        <button class="nav-item" type="button" data-view="chat" data-nav-section-item="prospects"><span class="nav-icon" data-icon="message-square"></span><span class="nav-label">Team Chat</span><span class="nav-count" data-nav-count="chat">0</span></button>
+        <button class="nav-item" type="button" data-view="team" data-nav-section-item="prospects"><span class="nav-icon" data-icon="users"></span><span class="nav-label">Team Access</span><span class="nav-count" data-nav-count="team">0</span></button>
+        <button class="nav-item" type="button" data-view="featureRequests" data-nav-section-item="prospects"><span class="nav-icon" data-icon="lightbulb"></span><span class="nav-label">Feature Requests</span><span class="nav-count" data-nav-count="featureRequests">0</span></button>
+        <button class="nav-item" type="button" data-view="dashboard" data-nav-key="ownedDashboard" data-nav-section-item="owned"><span class="nav-icon" data-icon="layout-grid"></span><span class="nav-label">Dashboard</span><span class="nav-count" data-nav-count="homesOwnedDashboard">0</span></button>
+        <button class="nav-item" type="button" data-view="homesOwned" data-nav-key="homesOwned" data-nav-section-item="owned"><span class="nav-icon" data-icon="briefcase"></span><span class="nav-label">Projects</span><span class="nav-count" data-nav-count="homesOwned">0</span></button>
+        <button class="nav-item" type="button" data-view="tasks" data-nav-section-item="owned"><span class="nav-icon" data-icon="clipboard-list"></span><span class="nav-label">Tasks</span><span class="nav-count" data-nav-count="ownedTasks">0</span></button>
+        <button class="nav-item" type="button" data-view="ownedCalendar" data-nav-section-item="owned"><span class="nav-icon" data-icon="calendar"></span><span class="nav-label">Calendar</span><span class="nav-count" data-nav-count="ownedCalendar">0</span></button>
+        <button class="nav-item" type="button" data-view="ownedMedia" data-nav-section-item="owned"><span class="nav-icon" data-icon="image"></span><span class="nav-label">Photos / Videos</span><span class="nav-count" data-nav-count="ownedMedia">0</span></button>
+        <button class="nav-item" type="button" data-view="ownedBudget" data-nav-section-item="owned"><span class="nav-icon" data-icon="circle-dollar"></span><span class="nav-label">Budget</span><span class="nav-count" data-nav-count="ownedBudget">0</span></button>
+        <button class="nav-item" type="button" data-view="ownedNotes" data-nav-section-item="owned"><span class="nav-icon" data-icon="square-pen"></span><span class="nav-label">Notes</span><span class="nav-count" data-nav-count="ownedNotes">0</span></button>
+        <button class="nav-item" type="button" data-view="ownedReports" data-nav-section-item="owned"><span class="nav-icon" data-icon="bar-chart"></span><span class="nav-label">Reports</span><span class="nav-count" data-nav-count="ownedReports">0</span></button>
+        <button class="nav-item" type="button" data-view="ownedSettings" data-nav-section-item="owned"><span class="nav-icon" data-icon="settings"></span><span class="nav-label">Settings</span><span class="nav-count" data-nav-count="ownedSettings">0</span></button>
+      </nav>
+      <div class="sidebar-foot">
+        <button class="nav-item passed-nav-item" type="button" data-view="passed">
+          <span>Passed</span>
+          <strong id="passedNavCount">0</strong>
+        </button>
+        <div class="sidebar-goal">
+          <div class="tiny-label">Monthly buying goal</div>
+          <div class="goal-row"><strong id="closedCount">0</strong><span>/ 3 closed</span></div>
+          <div class="progress"><div id="goalProgress"></div></div>
+        </div>
+        <div class="sidebar-current-project" id="sidebarCurrentProject" hidden></div>
+        <div class="workspace-name">Staker Collins Development</div>
+        <div class="sidebar-user" id="sidebarUser" style="display:none">
+          <span class="sidebar-avatar" id="sidebarAvatar">BC</span>
+          <span id="sidebarUserName"></span>
+          <button class="logout-btn" id="logoutBtn" type="button">Sign out</button>
+        </div>
+      </div>
+    </aside>
+
+    <main class="main">
+      <header class="topbar">
+        <button class="hamburger" id="navToggle" type="button" aria-label="Open menu">
+          <span></span><span></span><span></span>
+        </button>
+        <div>
+          <h1 id="viewTitle">Deal Dashboard</h1>
+          <p id="viewSubtitle">Daily command center for acquisitions, offers, rehab risk, and follow-up.</p>
+        </div>
+        <div class="top-actions">
+          <label class="search">
+            Search
+            <input id="searchInput" type="search" placeholder="Address, city, agent...">
+          </label>
+          <button class="primary" id="exportBtn" type="button">Export JSON</button>
+        </div>
+      </header>
+
+      <section class="view active" id="dashboardView">
+        <div class="stats-grid" id="statsGrid"></div>
+        <div class="dashboard-grid">
+          <section class="panel">
+            <div class="panel-head">
+              <div>
+                <h2>Needs Decision Today</h2>
+                <p>Highest priority deals with overdue or due-today tasks.</p>
+              </div>
+            </div>
+            <div class="stack-list" id="decisionList"></div>
+          </section>
+          <section class="panel photo-panel">
+            <div class="panel-head">
+              <div>
+                <h2>Main House Photos</h2>
+                <p>Every property now has a main image slot.</p>
+              </div>
+            </div>
+            <div class="photo-grid" id="dashboardPhotoGrid"></div>
+          </section>
+        </div>
+        <div class="dashboard-grid">
+          <section class="panel">
+            <h2>Best Deals To Chase First</h2>
+            <p>Sorted by current deal score, urgency, discount room, and entry price.</p>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Score</th>
+                    <th>Property</th>
+                    <th>Stage</th>
+                    <th>Listing</th>
+                    <th>List</th>
+                    <th>Target</th>
+                    <th>Agent</th>
+                    <th>Next Step</th>
+                  </tr>
+                </thead>
+                <tbody id="dashboardTable"></tbody>
+              </table>
+            </div>
+          </section>
+          <section class="panel">
+            <h2>Pipeline Health</h2>
+            <p>Where every property stands right now.</p>
+            <div class="stage-bars" id="stageBars"></div>
+          </section>
+        </div>
+        <div class="dashboard-grid" style="grid-template-columns: 1fr">
+          <section class="panel">
+            <div class="panel-head">
+              <div>
+                <h2>Recent Activity</h2>
+                <p>Everything the team has done across all deals.</p>
+              </div>
+            </div>
+            <div id="activityFeed"></div>
+          </section>
+        </div>
+      </section>
+
+      <section class="view" id="pipelineView">
+        <div class="kanban" id="pipelineBoard"></div>
+      </section>
+
+      <section class="view" id="rankingsView">
+        <div id="rankingPage"></div>
+      </section>
+
+      <section class="view" id="propertiesView">
+        <div class="properties-layout">
+          <section class="panel">
+            <div class="panel-head property-list-head">
+              <div>
+                <h2>Property List</h2>
+                <p>Click a property to open its full record.</p>
+              </div>
+              <div class="property-list-actions">
+                <label>Sort
+                  <select id="propertySort">
+                    <option value="score-roi">Best Score / ROI</option>
+                    <option value="price-asc">Price Low to High</option>
+                    <option value="price-desc">Price High to Low</option>
+                  </select>
+                </label>
+                <a class="secondary-link" href="https://www.realtracs.com/" target="_blank" rel="noreferrer">All listings</a>
+              </div>
+            </div>
+            <div class="property-list" id="propertyList"></div>
+          </section>
+          <section class="panel record-panel" id="recordPanel"></section>
+        </div>
+      </section>
+
+      <section class="view" id="passedView">
+        <section class="panel">
+          <div class="panel-head">
+            <div>
+              <h2>Passed Properties</h2>
+              <p>Properties the team rejected are kept here and hidden from active work.</p>
+            </div>
+            <span class="pill amber" id="passedCount">0 passed</span>
+          </div>
+          <div class="passed-list" id="passedList"></div>
+        </section>
+      </section>
+
+      <section class="view" id="detailView">
+        <div class="detail-shell">
+          <button class="back-link" id="backToProperties" type="button">← All properties</button>
+          <section class="panel record-panel detail-panel" id="detailPanel"></section>
+        </div>
+      </section>
+
+      <section class="view" id="calculatorView">
+        <div class="offer-calculator-page">
+          <div class="offer-page-head">
+            <div>
+              <div class="offer-breadcrumb">Prospects <span>›</span> Pipeline <span>›</span> <strong id="calcBreadcrumbProperty">Selected Property</strong> <span>›</span> Offer Calculator</div>
+              <h1>Offer Calculator</h1>
+              <p>Analyze the numbers and determine your maximum allowable offer.</p>
+            </div>
+            <div class="offer-toolbar">
+              <button class="secondary-link" type="button">Load Template <span data-icon="chevron"></span></button>
+              <button class="secondary-link pipeline-menu-btn" type="button" aria-label="More calculator actions">•••</button>
+              <button class="primary" id="saveUnderwritingTopBtn" type="button">Save Scenario</button>
+            </div>
+          </div>
+          <div class="offer-layout">
+            <main class="offer-main">
+              <section class="offer-property-card">
+                <img id="calcPropertyPhoto" src="" alt="">
+                <div class="offer-property-info">
+                  <label class="offer-property-select">Property<select id="calcProperty"></select></label>
+                  <h2 id="calcPropertyTitle">Selected Property</h2>
+                  <p id="calcPropertyLocation">Nashville, TN</p>
+                  <div class="offer-property-tags"><span id="calcPropertyStage">Under Analysis</span><span id="calcPropertyLeadType">Retail Lead</span></div>
+                  <div class="offer-property-stats" id="calcPropertyStats"></div>
+                </div>
+                <div class="offer-lead-score"><strong id="calcLeadScore">0</strong><span>Lead Score</span><em id="calcLeadScoreLabel">Review</em></div>
+              </section>
+
+              <section class="offer-input-card">
+                <div class="offer-tabs" role="tablist" aria-label="Calculator cost sections">
+                  <button class="active" type="button" data-calc-tab="purchase">Purchase & Financing</button>
+                  <button type="button" data-calc-tab="rehab">Rehab & Holding</button>
+                  <button type="button" data-calc-tab="selling">Selling Costs</button>
+                  <button type="button" data-calc-tab="other">Other Costs</button>
+                </div>
+                <div class="offer-input-grid">
+                  <div class="offer-form-pane">
+                    <div class="offer-field-row" data-calc-panel="purchase"><div><strong>Purchase Price</strong><span>What do you expect to pay?</span></div><label><input id="calcPurchase" class="money-input" inputmode="decimal" value="$0"></label></div>
+                    <div class="offer-field-row" data-calc-panel="purchase"><div><strong>Closing Costs (Purchase)</strong><span>Typically 2-3% of purchase price</span></div><label><input id="calcClosing" class="money-input" inputmode="decimal" value="$6,000"></label><em id="calcClosingPct">2.0%</em></div>
+                    <div class="offer-field-row" data-calc-panel="purchase"><div><strong>Financing</strong><span>Lender fees, points, etc.</span></div><label><input id="calcFinancing" class="money-input" inputmode="decimal" value="$0"></label><em id="calcFinancingPct">0.0%</em></div>
+                    <div class="offer-field-row" data-calc-panel="purchase other"><div><strong>Initial Escrow / Reserves</strong><span>Taxes, insurance, reserves</span></div><label><input id="calcContingency" class="money-input" inputmode="decimal" value="$10,000"></label><em>—</em></div>
+                    <div class="offer-field-row" data-calc-panel="rehab"><div><strong>After Repair Value (ARV)</strong><span>Retail resale value after rehab</span></div><label><input id="calcArv" class="money-input" inputmode="decimal" value="$300,000"></label></div>
+                    <div class="offer-field-row" data-calc-panel="rehab"><div><strong>Rehab Estimate</strong><span>Total construction budget</span></div><label><input id="calcRehab" class="money-input" inputmode="decimal" value="$55,000"></label></div>
+                    <div class="offer-field-row" data-calc-panel="selling"><div><strong>Selling Cost</strong><span>Agent commission, title, seller costs</span></div><label><input id="calcSelling" class="money-input" inputmode="decimal" value="$0"></label></div>
+                    <div class="offer-field-row" data-calc-panel="selling other"><div><strong>Target Profit</strong><span>Minimum profit required for the offer</span></div><label><input id="calcTargetProfit" class="money-input" inputmode="decimal" value="$45,000"></label></div>
+                    <div class="offer-field-row" data-calc-panel="other"><div><strong>Current List Price</strong><span>Reference price from listing or seller</span></div><label><input id="calcListPrice" class="money-input" inputmode="decimal" value="$0"></label></div>
+                    <div class="offer-total-row"><span>Total Purchase & Financing<small>Total investment to acquire</small></span><strong id="calcPurchaseTotal">$0</strong></div>
+                  </div>
+                  <aside class="offer-side-inputs" data-calc-side-panel="rehab">
+                    <section class="rehab-summary-card">
+                      <div class="offer-card-head"><h3>Rehab Summary</h3><span>Estimated Costs</span></div>
+                      <div id="calcRehabSummary"></div>
+                      <button class="secondary-link" type="button" data-open-scope-from-calc>View Full Rehab Breakdown <span>›</span></button>
+                    </section>
+                    <section class="holding-card">
+                      <div class="holding-row">
+                        <div><strong>Holding Period</strong><span>How long do you plan to hold?</span></div>
+                        <label><input id="calcWeeksAcq" type="number" min="0" max="52" placeholder="4"></label>
+                        <label><input id="calcWeeksRehab" type="number" min="0" max="52" placeholder="10"></label>
+                        <label><input id="calcWeeksSale" type="number" min="0" max="52" placeholder="8"></label>
+                      </div>
+                      <label class="holding-cost-field"><span>Monthly Holding Costs<small>PITI, utilities, lawn, misc.</small></span><input id="calcHolding" class="money-input" inputmode="decimal" value="$12,000"></label>
+                      <div id="calcTimelineSummary" style="display:none" class="timeline-summary"></div>
+                    </section>
+                  </aside>
+                </div>
+                <label class="calc-notes offer-notes">Underwriting Rationale
+                  <textarea id="calcNotes" placeholder="Offer logic, ARV confidence, repair risk, seller motivation, and next decision..."></textarea>
+                </label>
+              </section>
+
+              <section class="offer-scenarios-card">
+                <div class="offer-card-head"><h3>Offer Scenarios <span>Compare different strategies</span></h3></div>
+                <div class="offer-scenarios" id="calcScenarios"></div>
+                <div class="calc-actions">
+                  <button class="primary" id="saveUnderwritingBtn" type="button">Save Scenario</button>
+                  <button class="secondary-link" id="resetUnderwritingBtn" type="button">Reset to property values</button>
+                  <span id="calcSaveStatus"></span>
+                </div>
+              </section>
+            </main>
+            <aside class="offer-rail">
+              <section class="panel calc-result offer-summary-card">
+                <h2>Offer Summary</h2>
+                <div class="offer-mao-box">
+                  <span>Max Allowable Offer (MAO)</span>
+                  <strong id="maxOffer">$0</strong>
+                  <div><em id="calcSummaryProfit">$0 Potential Profit</em><em id="calcSummaryRoi">0.0% Return on Cost</em></div>
+                </div>
+                <div class="calc-kpis" id="calcKpis"></div>
+                <div id="calcWarnings"></div>
+                <p id="calcExplain"></p>
+                <div class="mini-lines offer-summary-lines" id="calcLines"></div>
+                <section class="sensitivity-card">
+                  <h3>Sensitivity Analysis</h3>
+                  <div id="calcSensitivity"></div>
+                  <button class="secondary-link" type="button">View Details <span>›</span></button>
+                </section>
+                <div id="calcTimelineViz" style="display:none" class="timeline-viz-wrap">
+                  <div class="tiny-label" style="margin-bottom:8px">Estimated Flip Timeline</div>
+                  <div class="timeline-bar-wrap">
+                    <div class="timeline-segment seg-acq" id="vizSegAcq"><span>Acquisition</span></div>
+                    <div class="timeline-segment seg-rehab" id="vizSegRehab"><span>Rehab</span></div>
+                    <div class="timeline-segment seg-sale" id="vizSegSale"><span>Sale</span></div>
+                  </div>
+                  <div class="timeline-bar-labels" id="vizBarLabels"></div>
+                  <div class="timeline-total" id="vizTotal"></div>
+                </div>
+              </section>
+              <section class="quick-actions-card">
+                <h3>Quick Actions</h3>
+                <button type="button"><span data-icon="file-text"></span>Export Analysis</button>
+                <button type="button"><span data-icon="users"></span>Share with Team</button>
+                <button type="button"><span data-icon="briefcase"></span>Duplicate Scenario</button>
+                <button type="button" id="calcAddToPipeline"><span data-icon="crosshair"></span>Add to Pipeline</button>
+              </section>
+            </aside>
+          </div>
+        </div>
+      </section>
+
+      <section class="view" id="scopeView">
+        <section class="panel">
+          <div class="panel-head">
+            <div>
+              <h2>Construction Scope</h2>
+              <p>Collect repair line items by property.</p>
+            </div>
+          </div>
+          <div class="scope-toolbar">
+            <label>Property
+              <select id="scopeProperty"></select>
+            </label>
+            <button class="secondary-link compact" id="scopeOpenPropertyBtn" type="button">Open Property</button>
+            <button class="secondary-link compact" id="scopeApplyRehabBtn" type="button">Use Total In Calculator</button>
+          </div>
+          <div class="stats-grid narrow" id="scopeStats"></div>
+          <div class="scope-add-form">
+            <input id="scopeItem" placeholder="Scope item, e.g. roof allowance">
+            <input id="scopeCost" class="money-input" inputmode="decimal" placeholder="Estimated cost">
+            <input id="scopeActualCost" class="money-input" inputmode="decimal" placeholder="Actual cost">
+            <select id="scopeStatusSelect" aria-label="Scope status">
+              <option>Needed</option>
+              <option>Bid Requested</option>
+              <option>Bid Received</option>
+              <option>Approved</option>
+              <option>In Progress</option>
+              <option>Done</option>
+              <option>Skipped</option>
+            </select>
+            <button id="addScopeBtn" type="button">Add Item</button>
+          </div>
+          <div class="form-status" id="scopeStatus" role="status"></div>
+          <div class="scope-list" id="scopeList"></div>
+        </section>
+      </section>
+
+      <section class="view" id="homesOwnedView">
+        <div class="stats-grid" id="homesOwnedStats"></div>
+        <div id="homesOwnedBoard"></div>
+      </section>
+
+      <section class="view" id="ownedCalendarView">
+        <section class="panel">
+          <div class="panel-head"><div><h2>Owned Calendar</h2><p>Upcoming purchase, rehab, list, and sale dates for owned projects.</p></div></div>
+          <div class="stack-list" id="ownedCalendarList"></div>
+        </section>
+      </section>
+
+      <section class="view" id="prospectMediaView"></section>
+
+      <section class="view" id="ownedMediaView">
+        <section class="panel">
+          <div class="panel-head"><div><h2>Photos / Videos</h2><p>Project media links grouped from Homes Owned records.</p></div></div>
+          <div class="stack-list" id="ownedMediaList"></div>
+        </section>
+      </section>
+
+      <section class="view" id="ownedBudgetView">
+        <section class="panel">
+          <div class="panel-head"><div><h2>Owned Budget</h2><p>Budget status across active flip projects.</p></div></div>
+          <div class="stack-list" id="ownedBudgetList"></div>
+        </section>
+      </section>
+
+      <section class="view" id="ownedNotesView">
+        <section class="panel">
+          <div class="panel-head"><div><h2>Owned Notes</h2><p>Recent project notes for homes already purchased.</p></div></div>
+          <div class="stack-list" id="ownedNotesList"></div>
+        </section>
+      </section>
+
+      <section class="view" id="ownedReportsView">
+        <section class="panel">
+          <div class="panel-head"><div><h2>Owned Reports</h2><p>Portfolio-level profit, budget, and risk rollups.</p></div></div>
+          <div class="stats-grid" id="ownedReportsGrid"></div>
+        </section>
+      </section>
+
+      <section class="view" id="ownedSettingsView">
+        <section class="panel">
+          <div class="panel-head"><div><h2>Homes Owned Settings</h2><p>Project administration shortcuts and ownership defaults.</p></div></div>
+          <div class="stack-list" id="ownedSettingsList"></div>
+        </section>
+      </section>
+
+      <section class="view" id="tasksView">
+        <div class="two-col">
+          <section class="panel">
+            <h2>Tasks</h2>
+            <div class="inline-form task-form">
+              <select id="taskProperty"></select>
+              <input id="taskText" placeholder="Next step">
+              <select id="taskOwner"></select>
+              <input id="taskDue" type="date">
+              <button id="addTaskBtn" type="button">Add</button>
+            </div>
+            <div class="stack-list" id="taskList"></div>
+          </section>
+          <section class="panel">
+            <h2>Overdue</h2>
+            <div id="overdueList"></div>
+          </section>
+        </div>
+      </section>
+
+      <section class="view" id="documentsView">
+        <section class="panel">
+          <h2>Documents</h2>
+          <div class="inline-form">
+            <select id="docProperty"></select>
+            <input id="docName" placeholder="Document name">
+            <input id="docUrl" placeholder="URL (optional)" type="url">
+            <select id="docType">
+              <option>Listing</option>
+              <option>Contract</option>
+              <option>Inspection</option>
+              <option>Photo</option>
+              <option>Contractor bid</option>
+            </select>
+            <button id="addDocBtn" type="button">Add</button>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Property</th><th>Name</th><th>Type</th><th>Link</th><th>Date</th></tr></thead>
+              <tbody id="docTable"></tbody>
+            </table>
+          </div>
+        </section>
+      </section>
+
+      <section class="view" id="chatView">
+        <section class="chat-shell">
+          <aside class="chat-sidebar">
+            <div class="panel-head">
+              <div>
+                <h2>Team Chat</h2>
+                <p>Internal deal, rehab, and finance coordination.</p>
+              </div>
+            </div>
+            <div class="chat-channel-list" id="chatChannelList"></div>
+            <div class="chat-reference-card">
+              <span class="tiny-label">Reference</span>
+              <select id="chatPropertySelect" aria-label="Attach a property reference"></select>
+            </div>
+          </aside>
+          <main class="chat-main">
+            <header class="chat-head">
+              <div>
+                <span class="tiny-label" id="chatChannelEyebrow">General</span>
+                <h2 id="chatChannelTitle">General</h2>
+                <p id="chatChannelSubtitle">Company-wide coordination and quick updates.</p>
+                <p class="chat-live-status" id="chatLiveStatus">Auto-refresh starts when another teammate is here.</p>
+              </div>
+              <button class="secondary-link compact" type="button" id="chatRefreshBtn">Refresh</button>
+            </header>
+            <div class="chat-feed" id="chatFeed" aria-live="polite"></div>
+            <form class="chat-composer" id="chatComposer">
+              <textarea id="chatMessageText" placeholder="Message the team..." maxlength="2000"></textarea>
+              <div class="chat-composer-actions">
+                <span class="form-status" id="chatStatus"></span>
+                <button class="primary" type="submit">Send</button>
+              </div>
+            </form>
+          </main>
+        </section>
+      </section>
+
+      <section class="view" id="teamView">
+        <div class="two-col">
+          <section class="panel">
+            <h2>Team Access</h2>
+            <div class="inline-form">
+              <input id="memberName" placeholder="Name">
+              <select id="memberRole">
+                <option value="acquisition">Acquisition</option>
+                <option value="underwriter">Underwriter</option>
+                <option value="construction">Construction</option>
+                <option value="finance">Finance</option>
+                <option value="owner">Owner</option>
+                <option value="viewer">Viewer</option>
+              </select>
+              <button id="addMemberBtn" type="button">Add</button>
+            </div>
+            <div class="team-list" id="teamList"></div>
+          </section>
+          <section class="panel">
+            <h2>Permissions</h2>
+            <div class="permission-grid">
+              <div><strong>Owner</strong><span>Everything</span></div>
+              <div><strong>Acquisition</strong><span>Calls, notes, offers</span></div>
+              <div><strong>Underwriter</strong><span>Underwriting, comps, scoring</span></div>
+              <div><strong>Construction</strong><span>Rehab estimates and scope</span></div>
+              <div><strong>Finance</strong><span>Funding fields and costs</span></div>
+              <div><strong>Viewer</strong><span>Read only</span></div>
+            </div>
+          </section>
+        </div>
+      </section>
+
+      <section class="view" id="featureRequestsView">
+        <div class="feature-page-grid">
+          <section class="panel">
+            <div class="panel-head">
+              <div>
+                <h2>Submit Feature Request</h2>
+                <p>Tell the team what should be added, fixed, or improved.</p>
+              </div>
+            </div>
+            <div class="feature-request-form">
+              <input id="featureRequester" placeholder="Your name">
+              <select id="featurePriority" aria-label="Feature priority">
+                <option>Nice to have</option>
+                <option>Important</option>
+                <option>Urgent</option>
+              </select>
+              <textarea id="featureRequestText" placeholder="What should we build or fix?"></textarea>
+              <button class="primary" id="addFeatureRequestBtn" type="button">Submit Request</button>
+            </div>
+          </section>
+          <section class="panel">
+            <div class="panel-head">
+              <div>
+                <h2>All Feature Requests</h2>
+                <p>Click a request to open the detail page.</p>
+              </div>
+              <span class="pill blue" id="featureRequestCount">0 requests</span>
+            </div>
+            <div class="feature-request-list" id="featureRequestList"></div>
+          </section>
+        </div>
+      </section>
+
+      <section class="view" id="featureRequestDetailView">
+        <div class="detail-shell">
+          <button class="back-link" id="backToFeatureRequests" type="button">← All feature requests</button>
+          <section class="panel" id="featureRequestDetailPanel"></section>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <div class="modal-overlay" id="newPropertyOverlay" style="display:none">
+    <div class="modal" id="newPropertyModal" role="dialog" aria-modal="true" aria-label="Add new property">
+      <div class="modal-head">
+        <h2>New Property</h2>
+        <button class="modal-close" id="newPropertyClose" type="button" aria-label="Close">x</button>
+      </div>
+      <form id="newPropertyForm" autocomplete="off">
+        <div class="modal-section-label">Address</div>
+        <div class="modal-row">
+          <label class="modal-field grow">Street Address *
+            <input id="npAddress" placeholder="608 Polk St" required>
+          </label>
+        </div>
+        <div class="modal-row">
+          <label class="modal-field grow">City *
+            <input id="npCity" placeholder="Manchester" required>
+          </label>
+          <label class="modal-field short">State *
+            <input id="npState" placeholder="TN" maxlength="2" required>
+          </label>
+          <label class="modal-field short">ZIP *
+            <input id="npZip" placeholder="37355" required>
+          </label>
+        </div>
+
+        <div class="modal-section-label">Property Details</div>
+        <div class="modal-row">
+          <label class="modal-field">List Price
+            <input id="npListPrice" type="number" placeholder="251700" min="0">
+          </label>
+          <label class="modal-field">Beds
+            <input id="npBeds" type="number" placeholder="3" min="0">
+          </label>
+          <label class="modal-field">Baths
+            <input id="npBaths" type="number" placeholder="2" min="0" step="0.5">
+          </label>
+        </div>
+        <div class="modal-row">
+          <label class="modal-field">Sq Ft
+            <input id="npSqft" type="number" placeholder="1143" min="0">
+          </label>
+          <label class="modal-field">Year Built
+            <input id="npYearBuilt" type="number" placeholder="1954" min="1800" max="2030">
+          </label>
+          <label class="modal-field">Lot
+            <input id="npLot" placeholder="0.28 acres">
+          </label>
+        </div>
+
+        <div class="modal-section-label">Contact</div>
+        <div class="modal-row">
+          <label class="modal-field grow">Listing Agent
+            <input id="npAgent" placeholder="Agent name">
+          </label>
+          <label class="modal-field grow">Phone
+            <input id="npPhone" type="tel" placeholder="(615) 555-0100">
+          </label>
+        </div>
+        <div class="modal-row">
+          <label class="modal-field grow">Brokerage
+            <input id="npBrokerage" placeholder="Brokerage name">
+          </label>
+          <label class="modal-field grow">MLS #
+            <input id="npMls" placeholder="2448497">
+          </label>
+        </div>
+
+        <div class="modal-section-label">Deal Notes</div>
+        <div class="modal-row">
+          <label class="modal-field grow">Why it matters
+            <textarea id="npWhy" placeholder="Why is this a good flip target?" rows="2"></textarea>
+          </label>
+        </div>
+
+        <div class="modal-actions">
+          <button class="primary" type="submit" id="newPropertySubmit">Add Property</button>
+          <button class="secondary-link" type="button" id="newPropertyCancel">Cancel</button>
+          <span id="newPropertyStatus"></span>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div class="modal-overlay" id="ownedOverlay" style="display:none">
+    <div class="modal" id="ownedModal" role="dialog" aria-modal="true" aria-label="Update owned home">
+      <div class="modal-head">
+        <h2>Owned Home Details</h2>
+        <button class="modal-close" id="ownedClose" type="button" aria-label="Close">×</button>
+      </div>
+      <input type="hidden" id="ownedPropertyId">
+      <p class="owned-modal-address" id="ownedModalAddress"></p>
+      <div class="owned-handoff-banner" id="ownedHandoffBanner" style="display:none">
+        This property is now in Homes Owned. Add details only when you want to track cost, photos, listing, or sale numbers.
+      </div>
+
+      <div class="modal-section-label">Ownership</div>
+      <div class="modal-row">
+        <label class="modal-field">Current Phase
+          <select id="ownedPhaseSelect">
+            <option>Purchased / Not Started</option>
+            <option>In Rehab</option>
+            <option>Ready to List</option>
+            <option>Listed</option>
+            <option>Under Contract</option>
+            <option>Sold / Reconciliation</option>
+          </select>
+        </label>
+        <label class="modal-field">Assigned Owner
+          <select id="ownedOwnerSelect">
+            <option value="">— Select owner —</option>
+          </select>
+        </label>
+      </div>
+      <div class="modal-row">
+        <label class="modal-field">Purchase Close Date
+          <input id="ownedPurchaseDate" type="date">
+        </label>
+        <label class="modal-field">Actual Purchase Price
+          <input id="ownedPurchasePrice" class="money-input" inputmode="decimal" placeholder="$0">
+        </label>
+      </div>
+      <div class="modal-row">
+        <label class="modal-field grow">Funding Source
+          <input id="ownedFundingSource" placeholder="Cash, hard money, private lender…">
+        </label>
+      </div>
+
+      <div class="modal-section-label">Rehab</div>
+      <div class="modal-row">
+        <label class="modal-field">Actual Spend To Date
+          <input id="ownedActualSpend" class="money-input" inputmode="decimal" placeholder="$0">
+        </label>
+        <label class="modal-field">Target Rehab Complete
+          <input id="ownedTargetRehab" type="date">
+        </label>
+      </div>
+
+      <div class="modal-section-label">Forecast</div>
+      <div class="modal-row">
+        <label class="modal-field">Updated ARV Estimate
+          <input id="ownedForecastArv" class="money-input" inputmode="decimal" placeholder="$0">
+        </label>
+        <label class="modal-field">Monthly Holding Cost
+          <input id="ownedMonthlyHolding" class="money-input" inputmode="decimal" placeholder="$0">
+        </label>
+      </div>
+
+      <div class="modal-section-label">Sale (when applicable)</div>
+      <div class="modal-row">
+        <label class="modal-field">Target List Price
+          <input id="ownedTargetListPrice" class="money-input" inputmode="decimal" placeholder="$0">
+        </label>
+        <label class="modal-field">Actual List Price
+          <input id="ownedActualListPrice" class="money-input" inputmode="decimal" placeholder="$0">
+        </label>
+      </div>
+      <div class="modal-row">
+        <label class="modal-field">List Date
+          <input id="ownedListDate" type="date">
+        </label>
+        <label class="modal-field">Sale Close Date
+          <input id="ownedSaleCloseDate" type="date">
+        </label>
+      </div>
+      <div class="modal-row">
+        <label class="modal-field">Buyer Contract Price
+          <input id="ownedBuyerPrice" class="money-input" inputmode="decimal" placeholder="$0">
+        </label>
+        <label class="modal-field">Seller Concessions
+          <input id="ownedConcessions" class="money-input" inputmode="decimal" placeholder="$0">
+        </label>
+      </div>
+      <div class="owned-modal-calcs">
+        <div><span>Net Proceeds</span><strong id="ownedNetProceeds">$0</strong></div>
+        <div><span>Final Profit</span><strong id="ownedFinalProfit">$0</strong></div>
+      </div>
+
+      <div class="modal-section-label">Next Action</div>
+      <div class="modal-row">
+        <label class="modal-field grow">What needs to happen next?
+          <input id="ownedNextAction" placeholder="Cabinets quote due, finalize scope, schedule photos…">
+        </label>
+      </div>
+
+      <div class="modal-actions">
+        <button class="primary" id="ownedSaveBtn" type="button">Save Ownership Data</button>
+        <button class="secondary-link" id="ownedCancel" type="button">Cancel</button>
+        <span id="ownedSaveStatus"></span>
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="app.js?v=prospect-media-20260522a"></script>
+</body>
+</html>
