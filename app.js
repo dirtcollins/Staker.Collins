@@ -103,6 +103,7 @@ let featureRequests = [];
 let chatMessages = [];
 let prospectMedia = [];
 let apiAvailable = false;
+let apiPersistent = false;
 
 let properties = [];
 let selectedId = "";
@@ -846,12 +847,14 @@ function mergeLocalState() {
     return saved ? normalizeProperty({ ...property, ...saved }) : property;
   });
   properties = [...properties, ...[...propertyState.values()].map(normalizeProperty)];
-  noteLog = (local.notes || []).map(normalizeNote);
-  tasks = local.tasks || [];
-  docs = local.documents || [];
-  scopes = (local.constructionScope || []).map(normalizeScopeItem);
-  chatMessages = (local.chatMessages || loadStoredChatMessages()).map(normalizeChatMessage);
-  prospectMedia = (local.prospectMedia || loadStoredProspectMedia()).map(normalizeProspectMedia);
+  if (Array.isArray(local.notes)) noteLog = local.notes.map(normalizeNote);
+  if (Array.isArray(local.tasks)) tasks = local.tasks;
+  if (Array.isArray(local.documents)) docs = local.documents;
+  if (Array.isArray(local.constructionScope)) scopes = local.constructionScope.map(normalizeScopeItem);
+  if (Array.isArray(local.chatMessages)) chatMessages = local.chatMessages.map(normalizeChatMessage);
+  else if (!chatMessages.length) chatMessages = loadStoredChatMessages().map(normalizeChatMessage);
+  if (Array.isArray(local.prospectMedia)) prospectMedia = local.prospectMedia.map(normalizeProspectMedia);
+  else if (!prospectMedia.length) prospectMedia = loadStoredProspectMedia().map(normalizeProspectMedia);
 }
 
 async function loadData() {
@@ -860,8 +863,9 @@ async function loadData() {
   try {
     const apiResponse = await fetch("/api/bootstrap");
     if (apiResponse.ok) {
-      apiAvailable = true;
       const bootstrap = await apiResponse.json();
+      apiPersistent = bootstrap.persistent !== false && bootstrap.database !== "memory";
+      apiAvailable = apiPersistent;
       properties = bootstrap.properties.map(normalizeProperty);
       noteLog = (bootstrap.notes || []).map(normalizeNote);
       tasks = bootstrap.tasks || [];
@@ -871,6 +875,12 @@ async function loadData() {
       featureRequests = (bootstrap.featureRequests || []).map(normalizeFeatureRequest);
       chatMessages = (bootstrap.chatMessages || []).map(normalizeChatMessage);
       prospectMedia = (bootstrap.prospectMedia || []).map(normalizeProspectMedia);
+      if (!apiPersistent) {
+        mergeLocalState();
+        featureRequests = loadStoredFeatureRequests();
+        if (!chatMessages.length) chatMessages = loadStoredChatMessages();
+        if (!prospectMedia.length) prospectMedia = loadStoredProspectMedia();
+      }
       selectedId = requestedHomes()[0]?.id || properties[0]?.id || "";
       return;
     }
@@ -878,6 +888,7 @@ async function loadData() {
     data = null;
   }
   apiAvailable = false;
+  apiPersistent = false;
   if (!data) {
     const response = await fetch("data/flip-targets.json");
     if (!response.ok) throw new Error(`Could not load property data: ${response.status}`);
@@ -4212,6 +4223,7 @@ function mediaPreview(item = {}, property = {}) {
 
 async function uploadMediaFile(file) {
   if (!file) return null;
+  if (!apiPersistent) return await readLocalMediaFile(file);
   const formData = new FormData();
   formData.append("file", file);
   const response = await fetch("/api/uploads/media", { method: "POST", body: formData });
@@ -4221,6 +4233,31 @@ async function uploadMediaFile(file) {
   }
   const { upload } = await response.json();
   return upload;
+}
+
+function readLocalMediaFile(file) {
+  const maxLocalUploadBytes = 4 * 1024 * 1024;
+  return new Promise((resolve, reject) => {
+    if (!file.type.startsWith("image/") && !file.type.startsWith("video/")) {
+      reject(new Error("Only image and video uploads are supported."));
+      return;
+    }
+    if (file.size > maxLocalUploadBytes) {
+      reject(new Error("For this live demo, upload files under 4 MB or paste a hosted media link."));
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => resolve({
+      url: String(reader.result || ""),
+      filename: file.name,
+      originalName: file.name,
+      mimeType: file.type || "application/octet-stream",
+      size: file.size,
+      localOnly: true
+    });
+    reader.onerror = () => reject(new Error("Could not read media file."));
+    reader.readAsDataURL(file);
+  });
 }
 
 function nextOwnedTask(task) {

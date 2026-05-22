@@ -1224,6 +1224,8 @@ async function api(req, res, pathname) {
   }
   if (pathname === "/api/bootstrap" && req.method === "GET") {
     return send(res, 200, {
+      database: useMemory ? "memory" : "postgres",
+      persistent: !useMemory,
       properties: await listProperties(),
       notes: useMemory ? memory.notes.filter((note) => !note.deleted_at) : await dbQuery("SELECT id, property_id, author, type, body, created_at FROM notes WHERE deleted_at IS NULL ORDER BY created_at DESC"),
       tasks: useMemory ? memory.tasks : await dbQuery("SELECT * FROM tasks ORDER BY due_date NULLS LAST, created_at DESC"),
