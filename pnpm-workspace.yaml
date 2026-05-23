@@ -1,5 +1,0 @@
-packages:
-  - "."
-
-allowBuilds:
-  '@clerk/shared': set this to true or false

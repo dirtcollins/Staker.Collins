@@ -1570,7 +1570,11 @@ export async function handler(req, res) {
     serveStatic(req, res, url.pathname);
   } catch (error) {
     console.error(error);
-    send(res, 500, { error: error.message });
+    const status = error.status || 500;
+    const message = status < 500 && error.message
+      ? error.message
+      : "Internal server error";
+    send(res, status, { error: message });
   }
 }
 

@@ -4,17 +4,22 @@
   "private": true,
   "type": "module",
   "engines": {
-    "node": "20.x"
+    "node": ">=20.0.0"
   },
   "scripts": {
     "start": "node server.js",
-    "dev": "MEMORY_DB=1 PORT=4181 node server.js",
+    "dev": "cross-env MEMORY_DB=1 PORT=4181 node server.js",
     "build": "node --check server.js && node --check app.js && node --check scripts/migrate.js && node --check scripts/seed.js",
     "db:migrate": "node scripts/migrate.js",
     "db:seed": "node scripts/seed.js"
   },
   "dependencies": {
+    "@clerk/backend": "^3.4.13",
+    "busboy": "^1.6.0",
     "dotenv": "^16.4.7",
     "pg": "^8.13.1"
+  },
+  "devDependencies": {
+    "cross-env": "^7.0.3"
   }
 }
