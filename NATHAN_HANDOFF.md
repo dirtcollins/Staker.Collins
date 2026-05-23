@@ -79,6 +79,27 @@ DATABASE_URL="postgres://USER:PASSWORD@HOST:PORT/DB" npm run db:migrate
 DATABASE_URL="postgres://USER:PASSWORD@HOST:PORT/DB" npm run db:seed
 ```
 
+## UploadThing Media Uploads
+
+Photo and video file uploads use UploadThing when `UPLOADTHING_TOKEN` is configured.
+
+1. Create or open the UploadThing app at:
+
+```text
+https://uploadthing.com/
+```
+
+2. Copy the token from the UploadThing dashboard API Keys tab.
+3. Add it to Vercel environment variables:
+
+```text
+UPLOADTHING_TOKEN=...
+```
+
+4. Redeploy the Vercel project.
+
+Without `UPLOADTHING_TOKEN`, Vercel cannot accept durable file uploads. The app can still save pasted media links, and local browser fallback can be used for demo uploads.
+
 ## Account Access
 
 This zip gives access to the app code. It does not grant dashboard access to Vercel, GitHub, Hostinger, or any database.

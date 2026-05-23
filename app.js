@@ -104,6 +104,7 @@ let chatMessages = [];
 let prospectMedia = [];
 let apiAvailable = false;
 let apiPersistent = false;
+let mediaUploadsAvailable = false;
 
 let properties = [];
 let selectedId = "";
@@ -888,6 +889,7 @@ async function loadData() {
       const bootstrap = await apiResponse.json();
       apiPersistent = bootstrap.persistent !== false && bootstrap.database !== "memory";
       apiAvailable = apiPersistent;
+      mediaUploadsAvailable = bootstrap.mediaUploadsAvailable === true;
       properties = bootstrap.properties.map(normalizeProperty);
       noteLog = (bootstrap.notes || []).map(normalizeNote);
       tasks = bootstrap.tasks || [];
@@ -911,6 +913,7 @@ async function loadData() {
   }
   apiAvailable = false;
   apiPersistent = false;
+  mediaUploadsAvailable = false;
   if (!data) {
     const response = await fetch("data/flip-targets.json");
     if (!response.ok) throw new Error(`Could not load property data: ${response.status}`);
@@ -4248,7 +4251,7 @@ function mediaPreview(item = {}, property = {}) {
 
 async function uploadMediaFile(file) {
   if (!file) return null;
-  if (!apiPersistent) return await readLocalMediaFile(file);
+  if (!mediaUploadsAvailable) return await readLocalMediaFile(file);
   const formData = new FormData();
   formData.append("file", file);
   const response = await fetch("/api/uploads/media", { method: "POST", body: formData });
