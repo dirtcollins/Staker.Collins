@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Staker Collins Deal Dashboard</title>
-  <link rel="stylesheet" href="styles.css?v=prospect-media-20260522a">
+  <link rel="stylesheet" href="styles.css?v=mobile-polish-20260523a">
 </head>
 <body>
   <div id="loginScreen" style="display:none">
@@ -12,25 +12,8 @@
       <img class="login-logo" src="assets/staker-collins-development-logo.svg" alt="Staker Collins Development">
       <h1 class="login-title">Staker Collins</h1>
       <p class="login-sub">Deal Dashboard</p>
-      <form id="loginForm" autocomplete="off">
-        <label class="login-field">
-          Who are you?
-          <select id="loginName">
-            <option value="">Select your name...</option>
-            <option>Ashton Staker</option>
-            <option>Brent Staker</option>
-            <option>Nathan Staker</option>
-            <option>Nicole Staker</option>
-            <option>Brendan Collins</option>
-          </select>
-        </label>
-        <label class="login-field">
-          Password (your phone number)
-          <input id="loginPhone" type="password" inputmode="numeric" placeholder="Enter your phone number" autocomplete="off">
-        </label>
-        <p class="login-error" id="loginError" style="display:none"></p>
-        <button class="primary login-btn" type="submit" id="loginSubmit">Sign In</button>
-      </form>
+      <div id="clerkSignInMount"></div>
+      <p class="login-error" id="loginError" style="display:none"></p>
     </div>
   </div>
   <div class="app-shell">
@@ -66,6 +49,7 @@
         <button class="nav-item" type="button" data-view="homesOwned" data-nav-key="homesOwned" data-nav-section-item="owned"><span class="nav-icon" data-icon="briefcase"></span><span class="nav-label">Projects</span><span class="nav-count" data-nav-count="homesOwned">0</span></button>
         <button class="nav-item" type="button" data-view="tasks" data-nav-section-item="owned"><span class="nav-icon" data-icon="clipboard-list"></span><span class="nav-label">Tasks</span><span class="nav-count" data-nav-count="ownedTasks">0</span></button>
         <button class="nav-item" type="button" data-view="ownedCalendar" data-nav-section-item="owned"><span class="nav-icon" data-icon="calendar"></span><span class="nav-label">Calendar</span><span class="nav-count" data-nav-count="ownedCalendar">0</span></button>
+        <button class="nav-item" type="button" data-view="ownedVendors" data-nav-section-item="owned"><span class="nav-icon" data-icon="users"></span><span class="nav-label">Vendors</span><span class="nav-count" data-nav-count="ownedVendors">0</span></button>
         <button class="nav-item" type="button" data-view="ownedMedia" data-nav-section-item="owned"><span class="nav-icon" data-icon="image"></span><span class="nav-label">Photos / Videos</span><span class="nav-count" data-nav-count="ownedMedia">0</span></button>
         <button class="nav-item" type="button" data-view="ownedBudget" data-nav-section-item="owned"><span class="nav-icon" data-icon="circle-dollar"></span><span class="nav-label">Budget</span><span class="nav-count" data-nav-count="ownedBudget">0</span></button>
         <button class="nav-item" type="button" data-view="ownedNotes" data-nav-section-item="owned"><span class="nav-icon" data-icon="square-pen"></span><span class="nav-label">Notes</span><span class="nav-count" data-nav-count="ownedNotes">0</span></button>
@@ -395,25 +379,27 @@
         </section>
       </section>
 
+      <section class="view" id="ownedVendorsView"></section>
+
       <section class="view" id="prospectMediaView"></section>
 
       <section class="view" id="ownedMediaView">
         <section class="panel">
-          <div class="panel-head"><div><h2>Photos / Videos</h2><p>Project media links grouped from Homes Owned records.</p></div></div>
+          <div class="panel-head"><div><h2>Photos / Videos</h2><p>Media links grouped from prospects and homes already purchased.</p></div></div>
           <div class="stack-list" id="ownedMediaList"></div>
         </section>
       </section>
 
       <section class="view" id="ownedBudgetView">
         <section class="panel">
-          <div class="panel-head"><div><h2>Owned Budget</h2><p>Budget status across active flip projects.</p></div></div>
+          <div class="panel-head"><div><h2>Budget</h2><p>Budget status across prospects and homes already purchased.</p></div></div>
           <div class="stack-list" id="ownedBudgetList"></div>
         </section>
       </section>
 
       <section class="view" id="ownedNotesView">
         <section class="panel">
-          <div class="panel-head"><div><h2>Owned Notes</h2><p>Recent project notes for homes already purchased.</p></div></div>
+          <div class="panel-head"><div><h2>Notes</h2><p>Recent notes for prospects and homes already purchased.</p></div></div>
           <div class="stack-list" id="ownedNotesList"></div>
         </section>
       </section>
@@ -780,6 +766,6 @@
     </div>
   </div>
 
-  <script type="module" src="app.js?v=prospect-media-20260522a"></script>
+  <script type="module" src="app.js?v=mobile-polish-20260523a"></script>
 </body>
 </html>

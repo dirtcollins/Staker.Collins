@@ -102,6 +102,7 @@ let noteLog = [];
 let featureRequests = [];
 let chatMessages = [];
 let prospectMedia = [];
+let vendors = [];
 let apiAvailable = false;
 let apiPersistent = false;
 let mediaUploadsAvailable = false;
@@ -118,6 +119,8 @@ let ownedFilters = {
   search: ""
 };
 const featureRequestStorageKey = "stakerCollinsFeatureRequestsV3";
+const vendorStorageKey = "stakerCollinsOwnedVendorsV1";
+const vendorWorkTypeStorageKey = "stakerCollinsVendorWorkTypesV1";
 const localStateStorageKey = "stakerCollinsStaticStateV1";
 const prospectMediaStorageKey = "stakerCollinsProspectMediaV1";
 const pipelineOrderStorageKey = "stakerCollinsPipelineOrderV1";
@@ -129,6 +132,8 @@ let showAllPipelineActions = false;
 let rankingSearchRenderTimer = null;
 let expandedRankingKey = "";
 let selectedOwnedTaskKey = "";
+let ownedVendorSearchQuery = "";
+let selectedOwnedVendorId = "";
 let taskFormState = { open: false, mode: "create", propertyId: "", taskId: "" };
 let calendarState = {
   date: new Date().toISOString().slice(0, 10),
@@ -143,6 +148,121 @@ const storageGet = (key) => {
 const storageSet = (key, value) => {
   try { globalThis.localStorage?.setItem(key, value); } catch {}
 };
+let clerkPublishableKey = "";
+let clerkAuthMode = "bypass";
+
+async function clerkSessionToken() {
+  try {
+    const clerk = globalThis.Clerk;
+    if (!clerk?.session) return "";
+    return await clerk.session.getToken();
+  } catch {
+    return "";
+  }
+}
+
+async function apiFetch(input, options = {}) {
+  const url = typeof input === "string" ? input : input?.url || "";
+  if (!String(url).startsWith("/api/")) return fetch(input, options);
+  const headers = new Headers(options.headers || {});
+  const token = await clerkSessionToken();
+  if (token && !headers.has("authorization")) {
+    headers.set("authorization", `Bearer ${token}`);
+  }
+  return fetch(input, { ...options, headers });
+}
+
+const defaultVendors = [
+  { id: "vendor-buildcore", companyName: "BuildCore Construction", contactPerson: "Michael Thompson", phone: "(512) 555-0198", email: "michael@buildcore.com", address: "1201 Ridgeway Dr, Austin, TX 78704", typeOfWork: "General Contracting" },
+  { id: "vendor-peak-electrical", companyName: "Peak Electrical Services", contactPerson: "Sarah Johnson", phone: "(512) 555-0123", email: "sarah@peakelectric.com", address: "4408 Burnet Rd, Austin, TX 78756", typeOfWork: "Electrical" },
+  { id: "vendor-pro-plumbing", companyName: "Pro Plumbing Solutions", contactPerson: "David Martinez", phone: "(512) 555-0177", email: "david@proplumbing.com", address: "7800 South Congress Ave, Austin, TX 78745", typeOfWork: "Plumbing" },
+  { id: "vendor-flooring-experts", companyName: "Flooring Experts LLC", contactPerson: "Lisa Anderson", phone: "(512) 555-0144", email: "lisa@flooringexperts.com", address: "302 West Mary St, Austin, TX 78704", typeOfWork: "Flooring" },
+  { id: "vendor-austin-drywall", companyName: "Austin Drywall Co.", contactPerson: "James Wilson", phone: "(512) 555-0188", email: "james@austindrywall.com", address: "5100 East Cesar Chavez St, Austin, TX 78702", typeOfWork: "Drywall" }
+];
+const DEFAULT_VENDOR_WORK_TYPES = [
+  "General Contracting",
+  "Electrical",
+  "Plumbing",
+  "Flooring",
+  "Drywall",
+  "Paint",
+  "Cabinets",
+  "Countertops",
+  "Landscaping",
+  "Roofing",
+  "HVAC",
+  "Listing Media",
+  "Other"
+];
+function vendorWorkTypesFor(vendor) {
+  const raw = vendor?.typeOfWork;
+  if (Array.isArray(raw)) return raw.filter(Boolean);
+  return raw ? [raw] : [];
+}
+function vendorWorkTypeLabel(vendor) {
+  return vendorWorkTypesFor(vendor).join(", ");
+}
+function vendorWorkTypeSummary(vendor) {
+  const types = vendorWorkTypesFor(vendor);
+  if (!types.length) return "Select work types";
+  if (types.length === 1) return types[0];
+  if (types.length === 2) return types.join(", ");
+  return `${types.length} types selected`;
+}
+function uniqueWorkTypes(values) {
+  const seen = new Set();
+  return values.map((value) => String(value || "").trim()).filter((value) => {
+    if (!value) return false;
+    const key = value.toLowerCase();
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+function loadStoredVendorWorkTypes() {
+  const stored = storageGet(vendorWorkTypeStorageKey);
+  if (!stored) return [...DEFAULT_VENDOR_WORK_TYPES];
+  try {
+    const parsed = JSON.parse(stored);
+    return uniqueWorkTypes([...(Array.isArray(parsed) ? parsed : []), ...DEFAULT_VENDOR_WORK_TYPES]);
+  } catch {
+    return [...DEFAULT_VENDOR_WORK_TYPES];
+  }
+}
+let vendorWorkTypes = loadStoredVendorWorkTypes();
+function loadStoredVendors() {
+  const stored = storageGet(vendorStorageKey);
+  if (!stored) return defaultVendors.map((vendor) => ({ ...vendor }));
+  try {
+    const parsed = JSON.parse(stored);
+    return Array.isArray(parsed) ? parsed.map(normalizeVendor) : defaultVendors.map((vendor) => ({ ...vendor }));
+  } catch {
+    return defaultVendors.map((vendor) => ({ ...vendor }));
+  }
+}
+function normalizeVendor(vendor = {}) {
+  return {
+    id: vendor.id || `vendor-${crypto.randomUUID()}`,
+    companyName: String(vendor.companyName || vendor.company_name || "").trim(),
+    contactPerson: String(vendor.contactPerson || vendor.contact_person || "").trim(),
+    phone: String(vendor.phone || "").trim(),
+    email: String(vendor.email || "").trim(),
+    address: String(vendor.address || "").trim(),
+    typeOfWork: uniqueWorkTypes(Array.isArray(vendor.typeOfWork || vendor.type_of_work)
+      ? vendor.typeOfWork || vendor.type_of_work
+      : vendor.typeOfWork || vendor.type_of_work
+        ? [vendor.typeOfWork || vendor.type_of_work]
+        : [])
+  };
+}
+function storeVendors() {
+  storageSet(vendorStorageKey, JSON.stringify(vendors));
+}
+function saveVendorWorkTypes() {
+  storageSet(vendorWorkTypeStorageKey, JSON.stringify(vendorWorkTypes));
+}
+vendors = loadStoredVendors();
+vendorWorkTypes = uniqueWorkTypes([...vendorWorkTypes, ...vendors.flatMap(vendorWorkTypesFor)]);
 let activeNavSection = "prospects";
 let activeNavKey = activeNavSection === "owned" ? "ownedDashboard" : "dashboard";
 let currentUser = { name: "Team", role: "team" };
@@ -158,6 +278,7 @@ const ownedSectionViews = new Set([
   "homesOwned",
   "tasks",
   "ownedCalendar",
+  "ownedVendors",
   "ownedMedia",
   "ownedBudget",
   "ownedNotes",
@@ -314,7 +435,7 @@ const saveRecordState = async (id, updates) => {
     applyLocal();
     return;
   }
-  const response = await fetch(`/api/properties/${id}/status`, {
+  const response = await apiFetch(`/api/properties/${id}/status`, {
     method: "PUT",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
@@ -884,11 +1005,12 @@ async function loadData() {
   let data;
   pipelineOrder = loadPipelineOrder();
   try {
-    const apiResponse = await fetch("/api/bootstrap");
+    const apiResponse = await apiFetch("/api/bootstrap");
     if (apiResponse.ok) {
       const bootstrap = await apiResponse.json();
       apiPersistent = bootstrap.persistent !== false && bootstrap.database !== "memory";
       apiAvailable = apiPersistent;
+      clerkPublishableKey = bootstrap.clerkPublishableKey || clerkPublishableKey;
       mediaUploadsAvailable = bootstrap.mediaUploadsAvailable === true;
       properties = bootstrap.properties.map(normalizeProperty);
       noteLog = (bootstrap.notes || []).map(normalizeNote);
@@ -899,6 +1021,8 @@ async function loadData() {
       featureRequests = (bootstrap.featureRequests || []).map(normalizeFeatureRequest);
       chatMessages = (bootstrap.chatMessages || []).map(normalizeChatMessage);
       prospectMedia = (bootstrap.prospectMedia || []).map(normalizeProspectMedia);
+      vendors = apiPersistent ? (bootstrap.vendors || []).map(normalizeVendor) : loadStoredVendors();
+      vendorWorkTypes = uniqueWorkTypes([...vendorWorkTypes, ...vendors.flatMap(vendorWorkTypesFor)]);
       if (!apiPersistent) {
         mergeLocalState();
         featureRequests = loadStoredFeatureRequests();
@@ -924,6 +1048,8 @@ async function loadData() {
   featureRequests = loadStoredFeatureRequests();
   if (!chatMessages.length) chatMessages = loadStoredChatMessages();
   if (!prospectMedia.length) prospectMedia = loadStoredProspectMedia();
+  vendors = loadStoredVendors();
+  vendorWorkTypes = uniqueWorkTypes([...vendorWorkTypes, ...vendors.flatMap(vendorWorkTypesFor)]);
   selectedId = requestedHomes()[0]?.id || activeProperties()[0]?.id || "";
 }
 
@@ -946,10 +1072,19 @@ const iconPaths = {
   "search-user": '<circle cx="10" cy="9" r="6"></circle><path d="m15 14 5 5"></path><circle cx="10" cy="8" r="2"></circle><path d="M6.5 13c.8-1.6 2-2.4 3.5-2.4s2.7.8 3.5 2.4"></path>',
   home: '<path d="M3 11.5 12 4l9 7.5"></path><path d="M5 10.5V20h14v-9.5"></path><path d="M10 20v-6h4v6"></path>',
   briefcase: '<rect x="3" y="7" width="18" height="13" rx="2"></rect><path d="M9 7V5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2"></path><path d="M8 13h.01"></path><path d="M12 13h4"></path>',
+  filter: '<path d="M3 5h18"></path><path d="M6 12h12"></path><path d="M10 19h4"></path>',
   calendar: '<rect x="3" y="5" width="18" height="16" rx="2"></rect><path d="M16 3v4"></path><path d="M8 3v4"></path><path d="M3 10h18"></path>',
+  "arrow-down": '<path d="M12 5v14"></path><path d="m19 12-7 7-7-7"></path>',
+  "arrow-up": '<path d="M12 19V5"></path><path d="m5 12 7-7 7 7"></path>',
+  "chevron-down": '<path d="m6 9 6 6 6-6"></path>',
+  paperclip: '<path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"></path>',
+  save: '<path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2Z"></path><path d="M17 21v-8H7v8"></path><path d="M7 3v5h8"></path>',
+  "upload-cloud": '<path d="M16 16l-4-4-4 4"></path><path d="M12 12v9"></path><path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3"></path><path d="M16 16l-4-4-4 4"></path>',
+  x: '<path d="M18 6 6 18"></path><path d="m6 6 12 12"></path>',
   image: '<rect x="3" y="5" width="18" height="14" rx="2"></rect><circle cx="8.5" cy="10" r="1.5"></circle><path d="m21 15-4-4L7 19"></path>',
   "circle-dollar": '<circle cx="12" cy="12" r="9"></circle><path d="M12 7v10"></path><path d="M15 9.5c-.8-.8-1.8-1.2-3-1.2-1.7 0-3 1-3 2.3 0 1.4 1.3 2 3 2.4 1.7.4 3 .9 3 2.4 0 1.3-1.3 2.3-3 2.3-1.3 0-2.5-.5-3.3-1.4"></path>',
   "square-pen": '<path d="M12 20H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"></path><path d="M16 4.5 19.5 8 11 16.5 7 17.5 8 13.5z"></path>',
+  trash: '<path d="M3 6h18"></path><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"></path><path d="M10 11v6"></path><path d="M14 11v6"></path>',
   shield: '<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z"></path>',
   star: '<path d="m12 2 3.09 6.26L22 9.27l-5 4.87L18.18 21 12 17.77 5.82 21 7 14.14 2 9.27l6.91-1.01L12 2Z"></path>',
   settings: '<circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06A1.65 1.65 0 0 0 15 19.4a1.65 1.65 0 0 0-1 .6 1.65 1.65 0 0 0-.4 1.08V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.6 15a1.65 1.65 0 0 0-.6-1 1.65 1.65 0 0 0-1.08-.4H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06A2 2 0 1 1 7.04 4.3l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-.6 1.65 1.65 0 0 0 .4-1.08V3a2 2 0 1 1 4 0v.09A1.65 1.65 0 0 0 15 4.6a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9c.23.36.59.62 1 .73.2.06.42.08.6.08H21a2 2 0 1 1 0 4h-.09A1.65 1.65 0 0 0 19.4 15z"></path>',
@@ -980,10 +1115,10 @@ function updateNavCounts() {
   const availableRankings = activeList.filter(isAvailableListing);
   const ownedList = activeList.filter(isOwnedProperty);
   const activeTasks = activeLinkedItems(tasks);
-  const ownedTasks = ownedList.reduce((sum, property) => sum + ownedProjectTasks(property).length, 0);
-  const ownedMedia = ownedList.reduce((sum, property) => sum + ownedMediaItems(property).length, 0);
-  const ownedBudget = ownedList.length;
-  const ownedNotes = noteLog.filter((note) => ownedList.some((property) => property.id === note.property_id)).length;
+  const allPropertyTasks = activeList.reduce((sum, property) => sum + ownedProjectTasks(property).length, 0);
+  const allPropertyMedia = activeList.reduce((sum, property) => sum + ownedMediaItems(property).length, 0);
+  const budgetPropertyCount = activeList.length;
+  const activeNotes = noteLog.filter((note) => !note.property_id || activeList.some((property) => property.id === note.property_id)).length;
   const ownedCalendar = ownedList.reduce((sum, property) => {
     const owned = getOwned(property);
     const tl = property.source?.timeline || property.timeline || {};
@@ -1002,11 +1137,12 @@ function updateNavCounts() {
   setNavCount("homesOwned", ownedList.length);
   setNavCount("homesOwnedDashboard", ownedList.length);
   setNavCount("tasks", activeTasks.length);
-  setNavCount("ownedTasks", ownedTasks);
+  setNavCount("ownedTasks", allPropertyTasks);
   setNavCount("ownedCalendar", ownedCalendar);
-  setNavCount("ownedMedia", ownedMedia);
-  setNavCount("ownedBudget", ownedBudget);
-  setNavCount("ownedNotes", ownedNotes);
+  setNavCount("ownedVendors", vendors.length);
+  setNavCount("ownedMedia", allPropertyMedia);
+  setNavCount("ownedBudget", budgetPropertyCount);
+  setNavCount("ownedNotes", activeNotes);
   setNavCount("ownedReports", 0);
   setNavCount("ownedSettings", teamMembers.length);
   setNavCount("documents", activeDocs.length);
@@ -1133,11 +1269,12 @@ function setActiveView(view, options = {}) {
     homesOwned: activeKey === "ownedDashboard"
       ? ["Dashboard", "Overview of owned projects, budget status, and work that needs attention."]
       : ["Projects", "Manage all of your house flip projects in one place."],
-    tasks: ["Tasks", "Capture owner, due date, and next step."],
+    tasks: ["Tasks", "Capture owner, due date, and next step for any property."],
     ownedCalendar: ["Calendar", "Upcoming purchase, rehab, list, and sale dates for owned projects."],
-    ownedMedia: ["Photos / Videos", "Review project media links grouped from Homes Owned records."],
-    ownedBudget: ["Budget", "Track budget status across active flip projects."],
-    ownedNotes: ["Notes", "Recent project notes for homes already purchased."],
+    ownedVendors: ["Vendors", "Manage your vendor information."],
+    ownedMedia: ["Photos / Videos", "Review media links for prospects and homes already purchased."],
+    ownedBudget: ["Budget", "Track budgets for prospects and homes already purchased."],
+    ownedNotes: ["Notes", "Notes for prospects and homes already purchased."],
     ownedReports: ["Reports", "Portfolio-level profit, budget, and risk rollups."],
     ownedSettings: ["Settings", "Homes Owned administration shortcuts."],
     documents: ["Documents", "Track contract, inspection, photo, and contractor file references."],
@@ -1192,6 +1329,7 @@ function handleRoute() {
 const ACTION_LABELS = {
   "property.created":         (m, addr) => `New property added: ${addr}`,
   "property.updated":         (m, addr) => `${addr} details updated`,
+  "property.deleted":         (m, addr) => `Property deleted: ${m?.address || addr}`,
   "property.status_updated":  (m, addr) => `${addr} moved to ${m?.status || "new stage"}`,
   "property.hazards_updated": (m, addr) => `${addr} hazard check updated`,
   "underwriting.saved":       (m, addr) => `${addr} underwriting saved`,
@@ -1206,6 +1344,9 @@ const ACTION_LABELS = {
   "construction_scope.deleted": (m, addr) => `Scope item deleted on ${addr}`,
   "property.hazards_updated": (m, addr) => `Hazard check updated on ${addr}`,
   "property.owned_updated":   (m, addr) => `${addr} ownership data updated`,
+  "vendor.created":           (m) => `Vendor added: ${m?.companyName || "Vendor"}`,
+  "vendor.updated":           (m) => `Vendor updated: ${m?.companyName || "Vendor"}`,
+  "vendor.deleted":           (m) => `Vendor deleted: ${m?.companyName || "Vendor"}`,
 };
 
 function renderActivityFeed() {
@@ -1260,8 +1401,8 @@ function renderStats() {
   setText("passedNavCount", passedList.length);
 }
 
-function ownedProjectTaskList(ownedList) {
-  return ownedList.flatMap((property) =>
+function ownedProjectTaskList(propertyList) {
+  return propertyList.flatMap((property) =>
     ownedProjectTasks(property).map((task) => ({ ...task, property }))
   );
 }
@@ -1415,7 +1556,7 @@ function renderFlipDashboard() {
         <section class="flip-dash-panel recent-panel">
           <div class="flip-panel-head"><h3>Best Next Calls</h3><button type="button" data-dashboard-view="pipeline">View pipeline</button></div>
           <div class="dash-recent-list">
-            ${sourceList.map((property) => `<div><span></span><strong>${escapeHtml(property.address)}</strong><em>${escapeHtml(property.phone || property.listingAgent || "Verify contact")}</em></div>`).join("") || "<p class=\"empty compact-empty\">No buyable prospects right now.</p>"}
+            ${sourceList.map((property) => `<div><span></span><strong>${escapeHtml(property.address)}</strong><em>${property.phone ? callLink(property.phone) : escapeHtml(property.listingAgent || "Verify contact")}</em></div>`).join("") || "<p class=\"empty compact-empty\">No buyable prospects right now.</p>"}
           </div>
         </section>
       </div>
@@ -1447,6 +1588,12 @@ function phoneLink(value) {
   if (!value) return "";
   const href = String(value).replace(/[^\d+]/g, "");
   return href ? `<a class="contact-chip phone-chip" href="tel:${href}">${escapeHtml(value)}</a>` : "";
+}
+
+function callLink(value, fallback = "") {
+  if (!value) return escapeHtml(fallback);
+  const href = String(value).replace(/[^\d+]/g, "");
+  return href ? `<a class="phone-link" href="tel:${href}">${escapeHtml(value)}</a>` : escapeHtml(value);
 }
 
 function emailLink(value) {
@@ -1534,7 +1681,7 @@ function renderDecisionList() {
           <span class="pill">${money(property.listPrice)}</span>
           <span class="pill amber">${escapeHtml(property.beds || "?")} bd / ${escapeHtml(property.baths || "?")} ba</span>
           <span class="pill amber">${escapeHtml(taskLabel)}</span>
-          <span class="pill blue">Call ${escapeHtml(property.phone || "agent")}</span>
+          <span class="pill blue">Call ${callLink(property.phone, "agent")}</span>
         </div>
       </button>
     `;
@@ -1591,7 +1738,7 @@ function renderDashboardTable() {
       <td>${listingStatusPill(property)}</td>
       <td>${money(property.listPrice)}</td>
       <td>${money(property.targetOfferLow)} - ${money(property.targetOfferHigh)}</td>
-      <td>${escapeHtml(property.listingAgent || "Verify")}<br><span>${escapeHtml(property.phone || "")}</span></td>
+      <td>${escapeHtml(property.listingAgent || "Verify")}<br><span>${callLink(property.phone)}</span></td>
       <td>${daysOnMarketValue(property) ? `${Number(daysOnMarketValue(property))} DOM · ` : ""}${auctionInfo(property) ? "Verify auction date" : property.status === "verify" ? "Verify listing, then call agent" : "Follow up"}</td>
     </tr>
   `).join("");
@@ -2030,7 +2177,7 @@ function renderRankings() {
           <section>
             <h3>Next Step</h3>
             <p>${escapeHtml(property.nextAction || property.why || "Follow up with seller or listing agent to confirm timeline.")}</p>
-            <div class="ranking-next-card"><span data-icon="calendar"></span><strong>Follow up call</strong><em>${escapeHtml(property.phone || "Contact needs review")}</em></div>
+            <div class="ranking-next-card"><span data-icon="calendar"></span><strong>Follow up call</strong><em>${callLink(property.phone, "Contact needs review")}</em></div>
             <h3>Notes</h3>
             <p>${escapeHtml(property.quickSummary || property.details || "Review listing facts, contact role, ARV confidence, and rehab scope before making an offer.")}</p>
           </section>
@@ -2214,7 +2361,7 @@ function renderPassedProperties() {
             ${scoreBadge(property)}
             ${listingStatusPill(property)}
             <span class="pill">${property.listingAgent || "Agent verify"}</span>
-            <span class="pill">${property.phone || "Phone verify"}</span>
+            <span class="pill">${callLink(property.phone, "Phone verify")}</span>
           </div>
           <div class="passed-card-actions">
             <button class="secondary-link" type="button" data-property-id="${property.id}">View Details</button>
@@ -2841,7 +2988,7 @@ function renderRecord(containerId = "recordPanel", mode = "embedded") {
       return;
     }
     try {
-      const response = await fetch(`/api/properties/${property.id}/notes`, {
+      const response = await apiFetch(`/api/properties/${property.id}/notes`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
@@ -2870,7 +3017,7 @@ function renderRecord(containerId = "recordPanel", mode = "embedded") {
         `Permanently delete ${property.address}?\n\nThis removes all tasks, notes, documents, and scope items for this property. This cannot be undone.`
       );
       if (!confirmed) return;
-      const response = await fetch(`/api/properties/${property.id}/delete`, {
+      const response = await apiFetch(`/api/properties/${property.id}/delete`, {
         method: "DELETE"
       });
       if (!response.ok) return alert("Could not delete property.");
@@ -2932,7 +3079,7 @@ function renderRecord(containerId = "recordPanel", mode = "embedded") {
         renderAll();
         return;
       }
-      const response = await fetch(`/api/properties/${property.id}/update`, {
+      const response = await apiFetch(`/api/properties/${property.id}/update`, {
         method: "PUT",
         headers: { "content-type": "application/json" },
         body: JSON.stringify(updates)
@@ -2998,7 +3145,7 @@ function renderRecord(containerId = "recordPanel", mode = "embedded") {
         }
         storeLocalState();
       } else {
-        const response = await fetch(`/api/properties/${property.id}/hazards`, {
+        const response = await apiFetch(`/api/properties/${property.id}/hazards`, {
           method: "PUT",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({ hazards })
@@ -3057,14 +3204,14 @@ function renderRecord(containerId = "recordPanel", mode = "embedded") {
           }
           storeLocalState();
         } else {
-          const response = await fetch(`/api/properties/${property.id}/timeline`, {
+          const response = await apiFetch(`/api/properties/${property.id}/timeline`, {
             method: "PUT",
             headers: { "content-type": "application/json" },
             body: JSON.stringify({ timeline })
           });
           if (!response.ok) throw new Error("Could not save timeline.");
           if (owned) {
-            await fetch(`/api/properties/${property.id}/owned`, {
+            await apiFetch(`/api/properties/${property.id}/owned`, {
               method: "PUT",
               headers: { "content-type": "application/json" },
               body: JSON.stringify({ owned })
@@ -3190,7 +3337,7 @@ async function addPropertyNote(propertyId, suffix) {
     renderRecord(suffix, suffix === "detailPanel" ? "detail" : "embedded");
     return;
   }
-  const response = await fetch(`/api/properties/${propertyId}/notes`, {
+  const response = await apiFetch(`/api/properties/${propertyId}/notes`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
@@ -3213,7 +3360,7 @@ async function deletePropertyNote(propertyId, noteId, suffix) {
     renderRecord(suffix, suffix === "detailPanel" ? "detail" : "embedded");
     return;
   }
-  const response = await fetch(`/api/notes/${noteId}`, { method: "DELETE" });
+  const response = await apiFetch(`/api/notes/${noteId}`, { method: "DELETE" });
   if (!response.ok && response.status !== 204) throw new Error("Could not delete note.");
   noteLog = noteLog.filter((note) => note.id !== noteId);
   renderRecord(suffix, suffix === "detailPanel" ? "detail" : "embedded");
@@ -3226,7 +3373,7 @@ async function refreshPropertyScore(propertyId, suffix) {
     button.disabled = true;
   }
   try {
-    const response = await fetch(`/api/properties/${propertyId}/refresh-score`, { method: "POST" });
+    const response = await apiFetch(`/api/properties/${propertyId}/refresh-score`, { method: "POST" });
     if (!response.ok) throw new Error((await response.json()).error || "Could not refresh score");
     const { property } = await response.json();
     const index = properties.findIndex((item) => item.id === propertyId);
@@ -3560,7 +3707,7 @@ async function saveUnderwriting() {
       saveLocalUnderwriting();
       return;
     }
-    const response = await fetch(`/api/properties/${propertyId}/underwriting`, {
+    const response = await apiFetch(`/api/properties/${propertyId}/underwriting`, {
       method: "PUT",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ ...readCalculatorInput(), createdBy: "Team" })
@@ -3739,7 +3886,7 @@ async function addScopeItem() {
       syncCalculator();
       return;
     }
-    const response = await fetch(`/api/properties/${id}/construction-scope`, {
+    const response = await apiFetch(`/api/properties/${id}/construction-scope`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ item: name, estimatedCost: cost, actualCost, status: scopeStatus })
@@ -3782,7 +3929,7 @@ async function createScopeItemForProperty(propertyIdValue, name, cost) {
     storeLocalState();
     return localScope;
   }
-  const response = await fetch(`/api/properties/${propertyIdValue}/construction-scope`, {
+  const response = await apiFetch(`/api/properties/${propertyIdValue}/construction-scope`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ item: name, estimatedCost: cost })
@@ -3836,7 +3983,7 @@ async function saveScopeRow(propertyIdValue, scopeId) {
       status.textContent = "Scope item saved locally.";
       return;
     }
-    const response = await fetch(`/api/properties/${propertyIdValue}/construction-scope/${scopeId}`, {
+    const response = await apiFetch(`/api/properties/${propertyIdValue}/construction-scope/${scopeId}`, {
       method: "PATCH",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(updates)
@@ -3871,7 +4018,7 @@ async function deleteScopeItem(propertyIdValue, scopeId) {
       status.textContent = "Scope item deleted locally.";
       return;
     }
-    const response = await fetch(`/api/properties/${propertyIdValue}/construction-scope/${scopeId}`, {
+    const response = await apiFetch(`/api/properties/${propertyIdValue}/construction-scope/${scopeId}`, {
       method: "DELETE"
     });
     if (!response.ok && response.status !== 204) throw new Error("Could not delete scope item.");
@@ -3909,7 +4056,7 @@ async function createDocumentForProperty(propertyIdValue, name, type, url) {
     storeLocalState();
     return localDocument;
   }
-  const response = await fetch(`/api/properties/${propertyIdValue}/documents`, {
+  const response = await apiFetch(`/api/properties/${propertyIdValue}/documents`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ name, type, url: url || null })
@@ -4122,14 +4269,14 @@ function ownedCalendarEvents(owned = ownedProjects()) {
 function renderTasks() {
   const view = document.getElementById("tasksView");
   if (!view) return;
-  const owned = ownedProjects();
-  if (!owned.length) {
-    view.innerHTML = `<section class="owned-page">${ownedPageHead("Tasks", "Track construction, listing, photo, and sale work across owned projects.")}${ownedEmptyState("No project tasks yet")}</section>`;
+  const taskProperties = activeProperties();
+  if (!taskProperties.length) {
+    view.innerHTML = `<section class="owned-page">${ownedPageHead("Tasks", "Track calls, follow-up, construction, listing, and sale work across all properties.")}${ownedEmptyState("No property tasks yet")}</section>`;
     bindOwnedEmptyState(view);
     updateNavCounts();
     return;
   }
-  const rows = ownedProjectTaskList(owned).sort((a, b) =>
+  const rows = ownedProjectTaskList(taskProperties).sort((a, b) =>
     String(a.dueDate || "9999-99-99").localeCompare(String(b.dueDate || "9999-99-99"))
   );
   if (rows.length && !rows.some((task) => ownedTaskKey(task) === selectedOwnedTaskKey)) {
@@ -4142,56 +4289,134 @@ function renderTasks() {
       ? rows.filter((row) => row.status !== "Done" && row.status !== "In Progress").length
       : rows.filter((row) => row.status === status).length;
   if (taskFormState.open) {
-    view.innerHTML = renderTaskFormPage(owned);
+    view.innerHTML = renderTaskFormPage(taskProperties);
     hydrateIcons();
     bindOwnedTasksPage(view);
     updateNavCounts();
     return;
   }
-  const taskCard = (task) => {
+  const isOverdueTask = (task) => task.dueDate && task.dueDate < todayIso() && task.status !== "Done";
+  const visibleRows = rows.slice(0, 48);
+  const inProgressCount = rows.filter((task) => task.status === "In Progress").length;
+  const onHoldCount = rows.filter((task) => String(task.status || "").toLowerCase().includes("hold")).length;
+  const completedCount = rows.filter((task) => task.status === "Done").length;
+  const overdueCount = rows.filter(isOverdueTask).length;
+  const myTaskCount = currentUser?.name
+    ? rows.filter((task) => task.assignedPerson === currentUser.name).length
+    : 0;
+  const projectCounts = taskProperties.reduce((acc, property) => {
+    const status = projectPortfolioStatus(property);
+    acc.total += 1;
+    if (status === "Completed") acc.completed += 1;
+    else if (status === "Planning") acc.planning += 1;
+    else if (status === "On Hold") acc.onHold += 1;
+    else acc.inProgress += 1;
+    return acc;
+  }, { total: 0, inProgress: 0, planning: 0, completed: 0, onHold: 0 });
+  const overallProgress = rows.length ? Math.round((completedCount / rows.length) * 100) : 0;
+  const selectedProjectOptions = taskProperties.map((property) => `<option value="${escapeHtml(property.id)}">${escapeHtml(property.address)}</option>`).join("");
+  const taskRow = (task) => {
     const key = ownedTaskKey(task);
+    const status = displayTaskStatus(task.status);
+    const priority = task.priority || (isOverdueTask(task) ? "High" : "Medium");
+    const projectTone = taskCategoryClass(task.category || task.property.address);
     return `
-      <button class="task-list-card ${key === selectedOwnedTaskKey ? "active" : ""}" type="button" data-owned-task-key="${escapeHtml(key)}" data-task-status="${escapeHtml(displayTaskStatus(task.status))}">
-        <span class="task-select-ring"></span>
-        <span class="task-card-main">
-          <strong>${escapeHtml(task.name)}</strong>
-          <span class="task-card-property">${escapeHtml(task.property.address)}</span>
-          <em><i class="${taskCategoryClass(task.category)}">${escapeHtml((task.category || "G").slice(0, 1))}</i>${escapeHtml(task.category || "General")}</em>
-        </span>
-        <span class="task-card-meta">
-          <i class="flip-status ${taskStatusClass(task.status)}">${escapeHtml(displayTaskStatus(task.status))}</i>
-          <small>${formatProjectDate(task.dueDate)}</small>
-          <small><b>${escapeHtml(personInitials(task.assignedPerson))}</b>${escapeHtml(task.assignedPerson || "Unassigned")}</small>
-        </span>
-      </button>
+      <div class="tasks-table-row" data-task-row data-owned-task-key="${escapeHtml(key)}" data-task-status="${escapeHtml(status)}" data-task-assignee="${escapeHtml(task.assignedPerson || "")}" data-task-overdue="${isOverdueTask(task) ? "true" : "false"}">
+        <label class="tasks-check-cell" aria-label="Select ${escapeHtml(task.name)}"><input type="checkbox"></label>
+        <div class="tasks-name-cell">
+          <strong>${escapeHtml(task.name || "Untitled task")}</strong>
+          <span>${escapeHtml(task.notes || task.extraNotes || "No description yet.")}</span>
+        </div>
+        <div class="tasks-project-cell"><i class="${projectTone}"></i><span>${escapeHtml(task.property.address)}</span></div>
+        <div class="tasks-assignee-cell"><b>${escapeHtml(personInitials(task.assignedPerson))}</b><span>${escapeHtml(task.assignedPerson || "Unassigned")}</span></div>
+        <div><span class="tasks-status-pill ${taskStatusClass(task.status)}">${escapeHtml(status)}</span></div>
+        <div class="tasks-date-cell ${isOverdueTask(task) ? "overdue" : ""}">${formatProjectDate(task.dueDate)}</div>
+        <div><span class="tasks-priority-pill ${String(priority).toLowerCase()}">${escapeHtml(priority)}</span></div>
+        <div class="tasks-actions-cell">
+          <button type="button" data-edit-task-key="${escapeHtml(key)}" aria-label="Edit ${escapeHtml(task.name || "task")}"><span data-icon="square-pen"></span></button>
+          <button type="button" aria-label="More actions for ${escapeHtml(task.name || "task")}">•••</button>
+        </div>
+      </div>
     `;
   };
   view.innerHTML = `
-    <section class="task-workspace">
-      <aside class="task-list-pane">
-        <div class="task-breadcrumbs">
-          <span>Projects</span><span>›</span><span>${escapeHtml(selected?.property.address || "Tasks")}</span><span>›</span><strong>${escapeHtml(selected?.name || "Task list")}</strong>
-        </div>
-        <div class="task-list-head">
+    <section class="tasks-dashboard">
+      <header class="tasks-page-header">
+        <div>
           <h2>Tasks</h2>
-          <button class="primary compact" type="button" id="ownedNewTaskBtn">+ New Task</button>
+          <p>Organize, assign, and track all project tasks in one place.</p>
         </div>
-        <div class="owned-segment-tabs task-status-tabs" id="ownedTaskStatusTabs">
-          ${["All", "To Do", "In Progress", "Done"].map((status) => `<button class="${status === "All" ? "active" : ""}" type="button" data-task-filter="${status}">${status} <span>${count(status)}</span></button>`).join("")}
+        <div class="tasks-header-actions">
+          <button class="tasks-outline-btn" type="button"><span data-icon="filter"></span>Filter</button>
+          <label class="tasks-project-select"><span data-icon="briefcase"></span><select id="tasksProjectFilter"><option value="">Projects</option>${selectedProjectOptions}</select></label>
+          <button class="primary compact tasks-new-btn" type="button" id="ownedNewTaskBtn"><span>+</span> New Task</button>
         </div>
-        <div class="task-list-search">
-          <label><span data-icon="search-user"></span><input id="ownedTaskSearch" type="search" placeholder="Search tasks..."></label>
-          <button class="secondary-link compact" type="button" aria-label="Task list options">☷</button>
+      </header>
+      <section class="tasks-tabbar">
+        <div class="tasks-tabs">
+          ${[
+            ["All", "All Tasks", rows.length],
+            ["Mine", "My Tasks", myTaskCount],
+            ["Overdue", "Overdue", overdueCount],
+            ["Completed", "Completed", completedCount]
+          ].map(([filter, label, total], index) => `<button class="${index === 0 ? "active" : ""}" type="button" data-task-filter="${filter}">${label}${total ? ` <span>${total}</span>` : ""}</button>`).join("")}
         </div>
-        <div class="task-list-stack">
-          ${rows.map(taskCard).join("") || "<p class=\"empty compact-empty\">No project tasks yet.</p>"}
+        <label class="tasks-search"><span data-icon="search-user"></span><input id="ownedTaskSearch" type="search" placeholder="Search tasks..."></label>
+      </section>
+      <section class="tasks-summary-grid">
+        ${[
+          ["Total Tasks", rows.length, "list", "total"],
+          ["In Progress", inProgressCount, "play", "progress"],
+          ["On Hold", onHoldCount, "pause", "hold"],
+          ["Completed", completedCount, "check", "done"],
+          ["Overdue", overdueCount, "alert", "overdue"]
+        ].map(([label, value, icon, tone]) => `
+          <article class="tasks-summary-card ${tone}">
+            <div><span>${label}</span><strong>${value}</strong></div>
+            <i data-task-summary-icon="${icon}"></i>
+          </article>
+        `).join("")}
+      </section>
+      <section class="tasks-table-card">
+        <div class="tasks-table-row tasks-table-head">
+          <label class="tasks-check-cell" aria-label="Select all tasks"><input type="checkbox"></label>
+          <span>Task</span>
+          <span>Project</span>
+          <span>Assignee</span>
+          <span>Status</span>
+          <span>Due Date ↓</span>
+          <span>Priority</span>
+          <span>Actions</span>
         </div>
-        <p class="project-showing">Showing ${rows.length ? `1 to ${rows.length}` : "0"} of ${rows.length} tasks</p>
+        <div class="tasks-table-body">
+          ${visibleRows.map(taskRow).join("") || `
+            <div class="tasks-empty-table">
+              <strong>No tasks yet</strong>
+              <span>Create a task for any property to start tracking follow-up, rehab work, listing prep, and project blockers.</span>
+              <button class="primary compact" type="button" id="ownedEmptyNewTaskBtn">+ New Task</button>
+            </div>
+          `}
+        </div>
+        <footer class="tasks-table-footer">
+          <span id="tasksShowingLabel">Showing ${visibleRows.length ? `1 to ${visibleRows.length}` : "0"} of ${rows.length} tasks</span>
+          <div class="tasks-pagination" aria-label="Task pages">
+            <button type="button" disabled>‹</button>
+            <button type="button" class="active">1</button>
+            <button type="button" ${rows.length > visibleRows.length ? "" : "disabled"}>›</button>
+          </div>
+        </footer>
+      </section>
+      <aside class="tasks-project-overview">
+        <h3>Projects Overview</h3>
+        <div><span>Total Projects</span><strong>${projectCounts.total}</strong></div>
+        <ul>
+          <li><i class="green"></i><span>In Progress</span><strong>${projectCounts.inProgress}</strong></li>
+          <li><i class="blue"></i><span>Planning</span><strong>${projectCounts.planning}</strong></li>
+          <li><i class="purple"></i><span>Completed</span><strong>${projectCounts.completed}</strong></li>
+          <li><i class="orange"></i><span>On Hold</span><strong>${projectCounts.onHold}</strong></li>
+        </ul>
+        <div class="tasks-progress-line"><span>Overall Progress</span><strong>${overallProgress}%</strong><i style="--pct:${overallProgress}%"></i></div>
       </aside>
-      <main class="task-detail-pane">
-        ${selected ? renderOwnedTaskDetail(selected) : renderEmptyTaskDetail(owned)}
-      </main>
-      ${renderTaskFormSlideOver(owned)}
     </section>
   `;
   hydrateIcons();
@@ -4199,16 +4424,16 @@ function renderTasks() {
   updateNavCounts();
 }
 
-function renderEmptyTaskDetail(owned = []) {
-  const firstProject = owned[0];
+function renderEmptyTaskDetail(propertyList = []) {
+  const firstProject = propertyList[0];
   return `
     <section class="task-detail-card task-empty-detail">
       <div class="task-detail-top">
         <span class="task-category-dot general">T</span>
         <span>No task selected</span>
       </div>
-      <h2>No project tasks yet</h2>
-      <p class="empty compact-empty">Create a task for ${escapeHtml(firstProject?.address || "an owned project")} to track rehab work, listing prep, and project blockers.</p>
+      <h2>No property tasks yet</h2>
+      <p class="empty compact-empty">Create a task for ${escapeHtml(firstProject?.address || "a property")} to track calls, follow-up, rehab work, listing prep, and blockers.</p>
       <button class="primary compact" type="button" id="ownedEmptyNewTaskBtn">+ New Task</button>
     </section>
   `;
@@ -4254,7 +4479,7 @@ async function uploadMediaFile(file) {
   if (!mediaUploadsAvailable) return await readLocalMediaFile(file);
   const formData = new FormData();
   formData.append("file", file);
-  const response = await fetch("/api/uploads/media", { method: "POST", body: formData });
+  const response = await apiFetch("/api/uploads/media", { method: "POST", body: formData });
   if (!response.ok) {
     const payload = await response.json().catch(() => ({}));
     throw new Error(payload.error || "Could not upload media.");
@@ -4379,20 +4604,20 @@ function renderOwnedTaskDetail(task) {
   `;
 }
 
-function renderTaskFormSlideOver(owned) {
+function renderTaskFormSlideOver(propertyList) {
   if (!taskFormState.open) return "";
   const isEdit = taskFormState.mode === "edit";
-  const property = propertyById(taskFormState.propertyId) || owned[0] || null;
+  const property = propertyById(taskFormState.propertyId) || propertyList[0] || null;
   const task = isEdit ? ownedProjectTasks(property || {}).find((item) => item.id === taskFormState.taskId) || {} : {};
   return `
     <div class="task-form-backdrop" id="taskFormBackdrop"></div>
     <aside class="task-form-panel" role="dialog" aria-modal="true" aria-label="${isEdit ? "Edit task" : "Create task"}">
       <header>
-        <div><h2>${isEdit ? "Edit Task" : "New Task"}</h2><p>${isEdit ? "Update task details and ownership." : "Create work for an owned project."}</p></div>
+        <div><h2>${isEdit ? "Edit Task" : "New Task"}</h2><p>${isEdit ? "Update task details and ownership." : "Create work for any property."}</p></div>
         <button type="button" id="taskFormClose" aria-label="Close task form">×</button>
       </header>
       <div class="task-form-grid">
-        <label>Project<select id="taskFormProject">${owned.map((item) => `<option value="${escapeHtml(item.id)}" ${item.id === property?.id ? "selected" : ""}>${escapeHtml(item.address)}</option>`).join("")}</select></label>
+        <label>Property<select id="taskFormProject">${propertyList.map((item) => `<option value="${escapeHtml(item.id)}" ${item.id === property?.id ? "selected" : ""}>${escapeHtml(item.address)}${isOwnedProperty(item) ? " (Owned)" : " (Prospect)"}</option>`).join("")}</select></label>
         <label>Task Name<input id="taskFormName" value="${escapeHtml(task.name || "")}" placeholder="Task name"></label>
         <label>Category<select id="taskFormCategory">${FLIP_TASK_PHASES.map((phase) => `<option ${phase === (task.category || "Demo") ? "selected" : ""}>${escapeHtml(phase)}</option>`).join("")}</select></label>
         <label>Status<select id="taskFormStatus">${FLIP_TASK_STATUSES.map((status) => `<option ${status === (task.status || "Not Started") ? "selected" : ""}>${escapeHtml(status)}</option>`).join("")}</select></label>
@@ -4412,109 +4637,95 @@ function renderTaskFormSlideOver(owned) {
   `;
 }
 
-function renderTaskFormPage(owned) {
+function renderTaskFormPage(propertyList) {
   const isEdit = taskFormState.mode === "edit";
-  const property = propertyById(taskFormState.propertyId) || owned[0] || null;
+  const property = propertyById(taskFormState.propertyId) || propertyList[0] || null;
   const task = isEdit ? ownedProjectTasks(property || {}).find((item) => item.id === taskFormState.taskId) || {} : {};
-  const projectBudget = property ? ownedRehabBudget(property).originalEstimate || getOwned(property).forecastRehab || property.rehab || 0 : 0;
-  const budget = property ? flipBudgetSummary(property) : { actual: 0, percentUsed: 0 };
-  const remaining = Math.max(0, projectBudget - Number(budget.actual || 0));
-  const checklist = Array.isArray(task.checklist) ? task.checklist : [];
   const option = (value, selected) => `<option value="${escapeHtml(value)}" ${value === selected ? "selected" : ""}>${escapeHtml(value)}</option>`;
-  const projectOptions = owned.map((item) => `<option value="${escapeHtml(item.id)}" ${item.id === property?.id ? "selected" : ""}>${escapeHtml(item.address)}</option>`).join("");
+  const projectOptions = propertyList.map((item) => `<option value="${escapeHtml(item.id)}" ${item.id === property?.id ? "selected" : ""}>${escapeHtml(item.address)}${isOwnedProperty(item) ? " (Owned)" : " (Prospect)"}</option>`).join("");
+  const vendorOptions = vendors.map((vendor) => option(vendor.companyName, task.vendor || "")).join("");
+  const selectedPriority = task.priority || "Medium";
+  const selectedStatus = task.status || "Not Started";
+  const selectedCategory = task.category || "";
+  const formTitle = isEdit ? "Edit Task" : "Add New Task";
   return `
-    <section class="task-create-page">
-      <header class="task-create-header">
+    <section class="task-create-page task-redesign-page">
+      <header class="task-create-header task-redesign-header">
         <div>
-          <div class="task-breadcrumbs"><span>Projects</span><span>›</span><span>${escapeHtml(property?.address || "Project")}</span><span>›</span><span>Tasks</span><span>›</span><strong>${isEdit ? "Edit Task" : "New Task"}</strong></div>
-          <h2>${isEdit ? "Edit Task" : "New Task"}</h2>
-          <p>${isEdit ? "Update task details" : `Create a new task for ${escapeHtml(property?.address || "this project")}`}</p>
+          <h2>${formTitle}</h2>
+          <div class="task-breadcrumbs"><button type="button" id="taskFormCancel">Tasks</button><span>›</span><strong>${formTitle}</strong></div>
         </div>
-        <div>
-          <button class="secondary-link" type="button" id="taskFormCancel">Cancel</button>
-          <button class="primary" type="button" id="taskFormSave">${isEdit ? "Save Task" : "Create Task"}</button>
+        <div class="task-redesign-actions">
+          <button class="task-cancel-button" type="button" id="taskFormClose"><span data-icon="x"></span>Cancel</button>
+          <button class="primary task-save-button" type="button" id="taskFormSave"><span data-icon="save"></span>${isEdit ? "Update Task" : "Save Task"}<span data-icon="chevron-down"></span></button>
         </div>
       </header>
-      <div class="task-create-layout">
-        <main class="task-create-main">
-          <section class="task-form-section task-details-section">
-            <div class="task-section-title"><span>1</span><h3>Task Details</h3></div>
-            <label class="wide">House<select id="taskFormProject">${projectOptions}</select></label>
-            <label class="wide">Task Name <b>*</b><input id="taskFormName" value="${escapeHtml(task.name || "")}" placeholder="e.g. Demo kitchen"></label>
-            <div class="task-form-row three">
-              <label>Category<select id="taskFormCategory"><option value="">Select category</option>${FLIP_TASK_PHASES.map((phase) => option(phase, task.category || "")).join("")}</select></label>
-              <label>Status<select id="taskFormStatus">${FLIP_TASK_STATUSES.map((status) => option(status, task.status || "Not Started")).join("")}</select></label>
-              <label>Priority<select id="taskFormPriority">${["Low", "Medium", "High"].map((priority) => option(priority, task.priority || "Medium")).join("")}</select></label>
-            </div>
-            <label class="wide">Description
-              <div class="rich-toolbar"><button type="button">B</button><button type="button"><i>I</i></button><button type="button"><u>U</u></button><button type="button">☷</button><button type="button">↩</button><button type="button">↪</button></div>
-              <textarea id="taskFormNotes" placeholder="Add a detailed description of the task...">${escapeHtml(task.notes || "")}</textarea>
-            </label>
-            <aside class="task-quick-tips">
-              <h3>Quick Tips</h3>
-              <p>Be specific about what needs to be done</p>
-              <p>Add checklist items to break down the work</p>
-              <p>Attach photos or plans for reference</p>
-              <p>Set a due date to keep the project on track</p>
-            </aside>
-          </section>
-          <section class="task-form-section">
-            <div class="task-section-title"><span>2</span><h3>Assignments & Scheduling</h3></div>
-            <div class="task-form-row four">
-              <label>Assignee<select id="taskFormAssignee"><option value="">Select assignee</option>${teamMembers.map((member) => option(member.name, task.assignedPerson || "")).join("")}</select></label>
-              <label>Due Date<input id="taskFormDue" type="date" value="${escapeHtml(task.dueDate || "")}"></label>
-              <label>Estimated Time<input id="taskFormEstimated" value="${escapeHtml(task.estimatedTime || "")}" placeholder="e.g. 1-2 days"></label>
-              <label>Start Date <em>(Optional)</em><input id="taskFormStart" type="date" value="${escapeHtml(task.startDate || "")}"></label>
-            </div>
-            <label class="task-toggle-row"><span data-icon="calendar"></span><strong>Add to Project Calendar<em>This task will appear on the project timeline</em></strong><input id="taskFormCalendar" type="checkbox" ${task.addToCalendar === false ? "" : "checked"}></label>
-          </section>
-          <section class="task-form-section">
-            <div class="task-section-title"><span>3</span><h3>Cost & Budget</h3></div>
-            <div class="task-form-row four">
-              <label>Estimated Cost<input id="taskFormEstimatedCost" class="money-input" value="${task.estimatedCost ? money(task.estimatedCost) : ""}" placeholder="$ 0.00"></label>
-              <label>Actual Cost<input id="taskFormActualCost" class="money-input" value="${task.actualCost ? money(task.actualCost) : ""}" placeholder="$ 0.00"></label>
-              <label>Cost Variance<input id="taskFormCostVariance" value="${money(Number(task.estimatedCost || 0) - Number(task.actualCost || 0))}" disabled></label>
-              <label class="track-cost-toggle"><strong>Track Actual Cost<em>Track real expenses for this task</em></strong><input id="taskFormTrackCost" type="checkbox" ${task.trackCost === false ? "" : "checked"}></label>
-            </div>
-            <div class="task-form-row three">
-              <label>Budget Category<select id="taskFormBudgetCategory"><option value="">Select budget category</option>${FLIP_BUDGET_CATEGORIES.map((category) => option(category, task.budgetCategory || "")).join("")}</select></label>
-              <label>Vendor / Contractor <em>(Optional)</em><input id="taskFormVendor" value="${escapeHtml(task.vendor || "")}" placeholder="Select vendor"></label>
-              <label>Payment Method<select id="taskFormPayment"><option value="">Select payment method</option>${["Cash", "Credit Card", "Check", "ACH", "Other"].map((value) => option(value, task.paymentMethod || "")).join("")}</select></label>
-            </div>
-            <p class="task-cost-note">Costs will sync to your project budget and help you track profitability.</p>
-          </section>
-          <section class="task-form-section">
-            <div class="task-section-title"><span>4</span><h3>Checklist</h3></div>
-            <p>Add steps that need to be completed for this task.</p>
-            <div class="task-checklist-input"><input id="taskFormChecklistItem" placeholder="Add checklist item..."><button type="button">+</button></div>
-            <div class="task-empty-checklist">${checklist.length ? checklist.map((item) => `<span>${escapeHtml(item.text)}</span>`).join("") : "<strong>No checklist items yet</strong><em>Add steps to stay organized and track progress.</em>"}</div>
-          </section>
-          <div class="task-form-bottom-grid">
-            <section class="task-form-section"><div class="task-section-title"><span>5</span><h3>Attachments</h3></div><p>Upload photos, videos, documents, or plans.</p><button class="task-upload-drop" type="button">☁<strong>Click to upload</strong><span>or drag and drop<br>Photos, videos, docs, plans (max 50MB)</span></button></section>
-            <section class="task-form-section"><div class="task-section-title"><span>6</span><h3>Notes</h3></div><p>Add any notes or special instructions.</p><textarea id="taskFormExtraNotes" placeholder="Add notes...">${escapeHtml(task.extraNotes || "")}</textarea></section>
+
+      <section class="task-form-section task-redesign-card">
+        <div class="task-section-title task-redesign-title"><i></i><h3>Task Details</h3></div>
+        <div class="task-redesign-details">
+          <label><span class="task-label-text">Task Name <b>*</b></span><input id="taskFormName" value="${escapeHtml(task.name || "")}" placeholder="Enter task name" autocomplete="off"></label>
+          <label>Project<select id="taskFormProject"><option value="">Select a project</option>${projectOptions}</select></label>
+          <label>Assignee<select id="taskFormAssignee"><option value="">Select assignee</option>${teamMembers.map((member) => option(member.name, task.assignedPerson || "")).join("")}</select></label>
+          <label class="task-description-field">Description<textarea id="taskFormNotes" placeholder="Describe the task...">${escapeHtml(task.notes || "")}</textarea></label>
+          <fieldset class="task-priority-control">
+            <legend>Priority</legend>
+            <label><input type="radio" name="taskPriorityChoice" value="Low" ${selectedPriority === "Low" ? "checked" : ""}><span data-priority="low"><i data-icon="arrow-down"></i>Low</span></label>
+            <label><input type="radio" name="taskPriorityChoice" value="Medium" ${selectedPriority === "Medium" ? "checked" : ""}><span data-priority="medium"><i></i>Medium</span></label>
+            <label><input type="radio" name="taskPriorityChoice" value="High" ${selectedPriority === "High" ? "checked" : ""}><span data-priority="high"><i data-icon="arrow-up"></i>High</span></label>
+            <select id="taskFormPriority" aria-label="Priority">${["Low", "Medium", "High"].map((priority) => option(priority, selectedPriority)).join("")}</select>
+          </fieldset>
+          <label>Status<select id="taskFormStatus">${FLIP_TASK_STATUSES.map((status) => option(status, selectedStatus)).join("")}</select></label>
+        </div>
+      </section>
+
+      <div class="task-redesign-grid">
+        <section class="task-form-section task-redesign-card">
+          <div class="task-section-title task-redesign-title"><span data-icon="calendar"></span><h3>Schedule</h3></div>
+          <div class="task-schedule-grid">
+            <label>Start Date<input id="taskFormStart" type="date" value="${escapeHtml(task.startDate || "")}"></label>
+            <label>Due Date<input id="taskFormDue" type="date" value="${escapeHtml(task.dueDate || "")}"></label>
+            <label>Duration<span class="task-duration-input"><input id="taskFormEstimated" value="${escapeHtml(task.estimatedTime || "")}" placeholder="7"><em>days</em></span></label>
+            <label>Reminder<select id="taskFormReminder"><option>1 day before</option><option>2 days before</option><option>1 week before</option><option>No reminder</option></select></label>
+            <label class="task-redesign-toggle"><input id="taskFormCalendar" type="checkbox" ${task.addToCalendar === false ? "" : "checked"}><span></span>All day task</label>
           </div>
-          <section class="task-form-section">
-            <div class="task-section-title"><span>7</span><h3>Additional Information <em>(Optional)</em></h3></div>
-            <div class="task-form-row four">
-              <label>Room / Location<input id="taskFormLocation" value="${escapeHtml(task.location || "")}" placeholder="e.g. Kitchen"></label>
-              <label>Linked Milestone<select id="taskFormMilestone"><option value="">Select milestone</option>${FLIP_MILESTONE_LABELS.map((value) => option(value, task.milestone || "")).join("")}</select></label>
-              <label>Depends On <em>(Optional)</em><select id="taskFormDepends"><option value="">Select task</option>${ownedProjectTasks(property || {}).filter((item) => item.id !== task.id).map((item) => option(item.id, task.dependsOn || "")).join("")}</select></label>
-              <label>Tags<input id="taskFormTags" value="${escapeHtml(Array.isArray(task.tags) ? task.tags.join(", ") : task.tags || "")}" placeholder="Add tags..."></label>
-            </div>
-          </section>
-        </main>
-        <aside class="task-create-summary">
-          <section>
-            <h3>${escapeHtml(property?.address || "Project")}</h3>
-            <p>${escapeHtml(ownedPhaseFor(property || {}))}</p>
-            <div><span>Project Budget</span><strong>${money(projectBudget)}</strong></div>
-            <div><span>Total Spent</span><strong>${money(budget.actual)}</strong></div>
-            <div><span>Budget Remaining</span><strong class="green">${money(remaining)}</strong></div>
-            <div><span>Project Progress</span><div class="task-progress"><i style="width:${Math.min(100, flipProgress(property || {}))}%"></i></div><strong>${flipProgress(property || {})}%</strong></div>
-          </section>
-          <p class="form-status" id="taskFormStatusMsg"></p>
-        </aside>
+        </section>
+
+        <section class="task-form-section task-redesign-card">
+          <div class="task-section-title task-redesign-title"><span data-icon="square-pen"></span><h3>Additional Details</h3></div>
+          <div class="task-additional-grid">
+            <label>Vendor<select id="taskFormVendor"><option value="">Select vendor</option>${vendorOptions}</select></label>
+            <label>Type of Work<select id="taskFormCategory"><option value="">Select type of work</option>${FLIP_TASK_PHASES.map((phase) => option(phase, selectedCategory)).join("")}</select></label>
+            <label class="wide">Tags<input id="taskFormTags" value="${escapeHtml(Array.isArray(task.tags) ? task.tags.join(", ") : task.tags || "")}" placeholder="Add tags..."><small>Press Enter or use commas to add tags</small></label>
+          </div>
+        </section>
       </div>
+
+      <section class="task-form-section task-redesign-card task-cost-budget-card">
+        <div class="task-cost-head">
+          <div class="task-section-title task-redesign-title"><span data-icon="circle-dollar"></span><h3>Cost & Budget</h3></div>
+          <label class="task-redesign-toggle task-cost-toggle"><input id="taskFormTrackCost" type="checkbox" ${task.trackCost === false ? "" : "checked"}><span></span>Track actual cost</label>
+        </div>
+        <div class="task-cost-grid">
+          <label>Estimated Cost<input id="taskFormEstimatedCost" class="money-input" value="${task.estimatedCost ? money(task.estimatedCost) : ""}" placeholder="$ 0.00"></label>
+          <label>Actual Cost<input id="taskFormActualCost" class="money-input" value="${task.actualCost ? money(task.actualCost) : ""}" placeholder="$ 0.00"></label>
+          <label>Cost Variance<input id="taskFormCostVariance" value="${money(Number(task.estimatedCost || 0) - Number(task.actualCost || 0))}" disabled></label>
+          <label>Budget Category<select id="taskFormBudgetCategory"><option value="">Select budget category</option>${FLIP_BUDGET_CATEGORIES.map((category) => option(category, task.budgetCategory || "")).join("")}</select></label>
+          <label>Payment Method<select id="taskFormPayment"><option value="">Select payment method</option>${["Cash", "Credit Card", "Check", "ACH", "Other"].map((value) => option(value, task.paymentMethod || "")).join("")}</select></label>
+        </div>
+      </section>
+
+      <section class="task-form-section task-redesign-card task-attachments-card">
+        <div class="task-section-title task-redesign-title"><span data-icon="paperclip"></span><h3>Attachments <em>(Optional)</em></h3></div>
+        <button class="task-upload-drop task-redesign-upload" type="button"><span data-icon="upload-cloud"></span><strong>Drag & drop files here or click to browse</strong><em>JPG, PNG, PDF, DOC, XLS (Max 20MB)</em></button>
+      </section>
+
+      <input id="taskFormLocation" type="hidden" value="${escapeHtml(task.location || "")}">
+      <input id="taskFormMilestone" type="hidden" value="${escapeHtml(task.milestone || "")}">
+      <input id="taskFormDepends" type="hidden" value="${escapeHtml(task.dependsOn || "")}">
+      <input id="taskFormChecklistItem" type="hidden" value="">
+      <textarea id="taskFormExtraNotes" hidden>${escapeHtml(task.extraNotes || "")}</textarea>
+      <p class="form-status task-redesign-status" id="taskFormStatusMsg"></p>
     </section>
   `;
 }
@@ -4532,7 +4743,7 @@ async function markTaskDone(propertyId, taskId) {
     markLocal();
     return;
   }
-  const response = await fetch(`/api/properties/${propertyId}/tasks/${taskId}`, {
+  const response = await apiFetch(`/api/properties/${propertyId}/tasks/${taskId}`, {
     method: "PATCH",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ status: "Done" })
@@ -4672,7 +4883,7 @@ function updateChatLiveStatus(activeCount = null) {
 
 async function refreshChatMessages(channel = activeChatChannel) {
   if (!apiAvailable) return;
-  const response = await fetch(`/api/chat/messages?channel=${encodeURIComponent(channel)}`);
+  const response = await apiFetch(`/api/chat/messages?channel=${encodeURIComponent(channel)}`);
   if (!response.ok) return;
   const { messages } = await response.json();
   const otherChannels = chatMessages.filter((message) => message.channel !== channel);
@@ -4685,7 +4896,7 @@ async function deleteChatMessage(id) {
   if (statusEl) statusEl.textContent = "Deleting...";
   try {
     if (apiAvailable) {
-      const response = await fetch(`/api/chat/messages/${encodeURIComponent(id)}`, {
+      const response = await apiFetch(`/api/chat/messages/${encodeURIComponent(id)}`, {
         method: "DELETE",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ author: currentUser.name })
@@ -4732,7 +4943,7 @@ async function pollChatPresence() {
   }
   chatPollInFlight = true;
   try {
-    const response = await fetch("/api/chat/presence", {
+    const response = await apiFetch("/api/chat/presence", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
@@ -4782,7 +4993,7 @@ async function sendChatMessage(event) {
   if (statusEl) statusEl.textContent = "Sending...";
   try {
     if (apiAvailable) {
-      const response = await fetch("/api/chat/messages", {
+      const response = await apiFetch("/api/chat/messages", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify(draft)
@@ -4910,7 +5121,7 @@ async function addFeatureRequest() {
   });
 
   try {
-    const response = await fetch("/api/feature-requests", {
+    const response = await apiFetch("/api/feature-requests", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(draft)
@@ -4937,7 +5148,7 @@ async function deleteFeatureRequest(id) {
   if (!request) return;
 
   try {
-    const response = await fetch(`/api/feature-requests/${id}`, { method: "DELETE" });
+    const response = await apiFetch(`/api/feature-requests/${id}`, { method: "DELETE" });
     if (!response.ok && response.status !== 204 && response.status !== 404) {
       throw new Error("Could not delete feature request.");
     }
@@ -5174,6 +5385,7 @@ function displayTaskStatus(status) {
 function taskStatusClass(status) {
   if (status === "Done") return "done";
   if (status === "In Progress") return "progress";
+  if (String(status || "").toLowerCase().includes("hold")) return "hold";
   return "todo";
 }
 
@@ -6144,52 +6356,148 @@ function renderOwnedCalendar() {
 function renderOwnedMedia() {
   const view = document.getElementById("ownedMediaView");
   if (!view) return;
-  const owned = ownedProjects();
-  if (!owned.length) {
-    view.innerHTML = `<section class="owned-page">${ownedPageHead("Photos / Videos", "Organize before, progress, finished, and listing media by room and project.")}${ownedEmptyState("No project media yet")}</section>`;
+  const mediaProperties = activeProperties();
+  if (!mediaProperties.length) {
+    view.innerHTML = `<section class="owned-page">${ownedPageHead("Photos / Videos", "Organize property media by room and project.")}${ownedEmptyState("No property media yet")}</section>`;
     bindOwnedEmptyState(view);
     return;
   }
-  const media = owned.flatMap((property) => ownedMediaItems(property).map((item) => ({ property, item })));
+  const media = mediaProperties
+    .flatMap((property) => ownedMediaItems(property).map((item) => ({ property, item })))
+    .sort((a, b) => String(b.item.createdAt || "").localeCompare(String(a.item.createdAt || "")));
   view.innerHTML = `
-    <section class="owned-page">
-      ${ownedPageHead("Photos / Videos", "Organize before, progress, finished, and listing media by room and project.", `
-        <button class="primary compact" type="button" id="ownedNewMediaBtn">+ Add Media</button>
-      `)}
-      <div class="owned-task-composer" id="ownedMediaComposer" hidden>
-        <select id="ownedMediaProject">${owned.map((property) => `<option value="${property.id}">${escapeHtml(property.address)}</option>`).join("")}</select>
-        <input id="ownedMediaUrl" placeholder="Photo/video link">
-        <input id="ownedMediaFile" type="file" accept="image/*,video/*">
-        <select id="ownedMediaType"><option>Photo</option><option>Video</option></select>
-        <select id="ownedMediaRoom">${FLIP_MEDIA_ROOMS.map((room) => `<option>${escapeHtml(room)}</option>`).join("")}</select>
-        <select id="ownedMediaPhase">${FLIP_MEDIA_PHASES.map((phase) => `<option>${escapeHtml(phase)}</option>`).join("")}</select>
-        <input id="ownedMediaCaption" placeholder="Caption">
-        <button type="button" id="ownedSaveMediaBtn">Add Media</button>
-        <span class="form-status" id="ownedMediaStatusMsg"></span>
-      </div>
-      <div class="owned-media-board">
-        ${FLIP_MEDIA_ROOMS.map((room) => {
-          const items = media.filter(({ item }) => item.room === room);
-          return `
-            <section class="owned-media-group">
-              <div class="flip-panel-head"><h3>${escapeHtml(room)}</h3><span>${items.length}</span></div>
-              <div class="owned-media-grid">
-                ${items.map(({ property, item }) => `
-                  <a href="${escapeHtml(item.url || "#")}" target="_blank" rel="noreferrer">
-                    <span class="owned-media-preview">${mediaPreview(item, property)}</span>
-                    <div><span>${escapeHtml(item.type || "Media")}</span><i>${escapeHtml(item.phase || "Progress")}</i></div>
-                    <strong>${escapeHtml(item.caption || item.room || "Project media")}</strong>
-                    <em>${escapeHtml(property.address)} · ${formatProjectDate(item.createdAt)}</em>
-                  </a>
-                `).join("") || "<p class=\"empty compact-empty\">No media yet.</p>"}
-              </div>
-            </section>
-          `;
-        }).join("")}
-      </div>
+    <section class="media-root-page">
+      <header class="media-root-header">
+        <h2>Photos / Videos</h2>
+        <div>
+          <button class="media-filter-btn" type="button"><span data-icon="filter"></span>Filter <span data-icon="chevron"></span></button>
+          <button class="primary compact media-upload-btn" type="button" id="ownedNewMediaBtn"><span>↥</span> Upload <span data-icon="chevron"></span></button>
+        </div>
+      </header>
+      <nav class="media-root-tabs" aria-label="Media filters">
+        ${renderMediaTabs(media.length, media.filter(({ item }) => !isVideoMedia(item)).length, media.filter(({ item }) => isVideoMedia(item)).length)}
+      </nav>
+      ${renderOwnedMediaComposer(mediaProperties)}
+      ${renderMediaGallery(media.map(({ property, item }) => mediaGalleryItem({
+        id: item.id,
+        url: item.url,
+        type: item.type || (isVideoMedia(item) ? "Video" : "Photo"),
+        title: item.caption || item.originalName || item.room || "Property media",
+        createdAt: item.createdAt,
+        category: item.phase || item.room || "Site Progress",
+        property,
+        fallbackPhoto: propertyPhoto(property)
+      })), media.length)}
     </section>
   `;
   bindOwnedMediaPage(view);
+}
+
+function renderOwnedMediaComposer(mediaProperties) {
+  return `
+    <div class="media-upload-modal" id="ownedMediaComposer" hidden>
+      <button class="media-upload-backdrop" type="button" data-media-close aria-label="Close upload modal"></button>
+      <section class="media-upload-dialog" role="dialog" aria-modal="true" aria-labelledby="ownedMediaDialogTitle">
+        <header>
+          <div>
+            <h3 id="ownedMediaDialogTitle">Upload Photos / Videos</h3>
+            <p>Add photos and videos for your team to view.</p>
+          </div>
+          <button class="media-modal-close" type="button" data-media-close aria-label="Close upload modal"><span data-icon="x"></span></button>
+        </header>
+        <button class="media-drop-zone" type="button" id="ownedMediaDropZone">
+          <span data-icon="upload-cloud"></span>
+          <strong>Drag and drop files here</strong>
+          <em>or click to browse</em>
+          <small>JPG, PNG, HEIC, MP4, MOV up to 500MB each</small>
+        </button>
+        <input id="ownedMediaFile" class="media-file-input" type="file" accept="image/*,video/*">
+        <div class="media-modal-grid">
+          <label><span class="media-field-label">Project</span><select id="ownedMediaProject">${mediaProperties.map((property) => `<option value="${property.id}" ${property.id === selectedId ? "selected" : ""}>${escapeHtml(property.address)}${isOwnedProperty(property) ? " (Owned)" : " (Prospect)"}</option>`).join("")}</select></label>
+          <label><span class="media-field-label">Album <em>(Optional)</em></span><select id="ownedMediaRoom"><option value="">Select album</option>${FLIP_MEDIA_ROOMS.map((room) => `<option>${escapeHtml(room)}</option>`).join("")}</select></label>
+          <label><span class="media-field-label">Category <em>(Optional)</em></span><select id="ownedMediaPhase"><option value="">Select category</option>${FLIP_MEDIA_PHASES.map((phase) => `<option>${escapeHtml(phase)}</option>`).join("")}</select></label>
+          <label><span class="media-field-label">Title <em>(Optional)</em></span><input id="ownedMediaCaption" placeholder="Enter a title"></label>
+          <label><span class="media-field-label">Description <em>(Optional)</em></span><textarea id="ownedMediaDescription" placeholder="Add a description..."></textarea></label>
+        </div>
+        <input id="ownedMediaUrl" type="hidden" value="">
+        <input id="ownedMediaType" type="hidden" value="Photo">
+        <footer>
+          <label class="media-notify-toggle"><input id="ownedMediaNotify" type="checkbox" checked><span></span><strong>Notify team<em>Send a notification to team members</em></strong></label>
+          <div>
+            <span class="form-status" id="ownedMediaStatusMsg"></span>
+            <button class="secondary-link" type="button" data-media-close>Cancel</button>
+            <button class="primary" type="button" id="ownedSaveMediaBtn">Upload</button>
+          </div>
+        </footer>
+      </section>
+    </div>
+  `;
+}
+
+function renderMediaTabs(total, photoCount, videoCount) {
+  return [
+    ["all", "All", total],
+    ["photo", "Photos", photoCount],
+    ["video", "Videos", videoCount],
+    ["album", "Albums", 0]
+  ].map(([filter, label, count], index) => `<button class="${index === 0 ? "active" : ""}" type="button" data-media-filter="${filter}">${label}${count ? ` <span>${count}</span>` : ""}</button>`).join("");
+}
+
+function mediaGalleryItem({ id, url, type, title, createdAt, category, property, fallbackPhoto }) {
+  const isVideo = String(type || "").toLowerCase() === "video" || /\.(mp4|mov|webm)(\?|$)/i.test(String(url || ""));
+  return {
+    id: id || crypto.randomUUID(),
+    url: safeUrl(url || fallbackPhoto || ""),
+    kind: isVideo ? "video" : "photo",
+    title: title || (isVideo ? "Video" : "Photo"),
+    createdAt: createdAt || todayIso(),
+    category: category || "Site Progress",
+    property,
+    duration: isVideo ? "0:24" : ""
+  };
+}
+
+function renderMediaGallery(items, total) {
+  return `
+    <section class="media-gallery-grid">
+      ${items.map((item) => `
+        <article class="media-gallery-card" data-media-card data-media-kind="${escapeHtml(item.kind)}">
+          <a href="${escapeHtml(item.url || "#")}" target="_blank" rel="noreferrer">
+            <span class="media-gallery-thumb">
+              ${item.kind === "video" ? `<video src="${escapeHtml(item.url)}" muted playsinline preload="metadata"></video>` : `<img src="${escapeHtml(item.url)}" alt="${escapeHtml(item.title)}">`}
+              <i>${item.kind === "video" ? "▣" : "▧"}</i>
+              ${item.duration ? `<b>${escapeHtml(item.duration)}</b>` : ""}
+            </span>
+            <span class="media-gallery-meta">
+              <strong>${escapeHtml(item.title)}</strong>
+              <em>${formatMediaTimestamp(item.createdAt)}</em>
+              <small>${escapeHtml(item.category)}</small>
+            </span>
+          </a>
+          <button type="button" aria-label="More options for ${escapeHtml(item.title)}">⋮</button>
+        </article>
+      `).join("") || `
+        <div class="media-empty-state">
+          <strong>No photos or videos yet</strong>
+          <span>Upload a file or paste a hosted media link to start building this gallery.</span>
+        </div>
+      `}
+    </section>
+    <footer class="media-gallery-footer">
+      <span id="mediaShowingLabel">Showing ${items.length ? `1 to ${items.length}` : "0"} of ${total} items</span>
+      <div class="media-pagination" aria-label="Media pages">
+        <button type="button" disabled>‹</button>
+        <button type="button" class="active">1</button>
+        <button type="button" disabled>›</button>
+      </div>
+    </footer>
+  `;
+}
+
+function formatMediaTimestamp(value) {
+  const date = value ? new Date(value) : new Date();
+  if (Number.isNaN(date.getTime())) return formatProjectDate(value);
+  return `${date.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })} · ${date.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}`;
 }
 
 function prospectMediaPropertyOptions() {
@@ -6208,21 +6516,19 @@ function renderProspectMedia() {
   const prospects = prospectMediaPropertyOptions();
   const categories = ["General", "Exterior", "Interior", "Repairs", "Walkthrough", "Comps", "Neighborhood", "Contractor"];
   const items = prospectMedia.slice().sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)));
-  const groups = [
-    { key: "general", title: "General / Not tied to a house", items: items.filter((item) => !item.property_id) },
-    ...prospects.map((property) => ({
-      key: property.id,
-      title: property.address,
-      items: items.filter((item) => item.property_id === property.id)
-    }))
-  ].filter((group) => group.key === "general" || group.items.length);
-
   view.innerHTML = `
-    <section class="owned-page prospect-media-page">
-      ${prospectPageHead("Photos / Videos", "Add prospect photos, walkthrough videos, repairs, comps, and anything the team needs before purchase.", `
-        <button class="primary compact" type="button" id="prospectNewMediaBtn">+ Add Media</button>
-      `)}
-      <div class="owned-task-composer" id="prospectMediaComposer" hidden>
+    <section class="media-root-page prospect-media-page">
+      <header class="media-root-header">
+        <h2>Photos / Videos</h2>
+        <div>
+          <button class="media-filter-btn" type="button"><span data-icon="filter"></span>Filter <span data-icon="chevron"></span></button>
+          <button class="primary compact media-upload-btn" type="button" id="prospectNewMediaBtn"><span>↥</span> Upload <span data-icon="chevron"></span></button>
+        </div>
+      </header>
+      <nav class="media-root-tabs" aria-label="Media filters">
+        ${renderMediaTabs(items.length, items.filter((item) => !isVideoMedia(item)).length, items.filter(isVideoMedia).length)}
+      </nav>
+      <div class="owned-task-composer media-upload-composer" id="prospectMediaComposer" hidden>
         <select id="prospectMediaProperty">
           <option value="">General / not tied to a house</option>
           ${prospects.map((property) => `<option value="${escapeHtml(property.id)}">${escapeHtml(property.address)}</option>`).join("")}
@@ -6235,34 +6541,19 @@ function renderProspectMedia() {
         <button type="button" id="prospectSaveMediaBtn">Add Media</button>
         <span class="form-status" id="prospectMediaStatusMsg"></span>
       </div>
-      <div class="owned-media-board">
-        ${groups.map((group) => `
-          <section class="owned-media-group">
-            <div class="flip-panel-head"><h3>${escapeHtml(group.title)}</h3><span>${group.items.length}</span></div>
-            <div class="owned-media-grid">
-              ${group.items.map((item) => {
-                const property = prospectMediaProperty(item);
-                return `
-                  <article class="prospect-media-card">
-                    <a href="${escapeHtml(item.url || "#")}" target="_blank" rel="noreferrer">
-                      <span class="owned-media-preview">${mediaPreview(item, property || {})}</span>
-                      <div><span>${escapeHtml(item.type || "Media")}</span><i>${escapeHtml(item.category || "General")}</i></div>
-                      <strong>${escapeHtml(item.caption || item.original_name || "Prospect media")}</strong>
-                      <em>${escapeHtml(property?.address || "General")} · ${formatProjectDate(item.created_at)}</em>
-                    </a>
-                    <button class="danger-link compact prospect-media-delete" type="button" data-prospect-media-delete="${escapeHtml(item.id)}">Delete</button>
-                  </article>
-                `;
-              }).join("") || "<p class=\"empty compact-empty\">No media yet.</p>"}
-            </div>
-          </section>
-        `).join("") || `
-          <section class="owned-media-group">
-            <div class="flip-panel-head"><h3>General / Not tied to a house</h3><span>0</span></div>
-            <p class="empty compact-empty">No prospect media yet.</p>
-          </section>
-        `}
-      </div>
+      ${renderMediaGallery(items.map((item) => {
+        const property = prospectMediaProperty(item);
+        return mediaGalleryItem({
+          id: item.id,
+          url: item.url,
+          type: item.type,
+          title: item.caption || item.original_name || "Prospect media",
+          createdAt: item.created_at,
+          category: item.category || property?.address || "Site Progress",
+          property,
+          fallbackPhoto: property ? propertyPhoto(property) : ""
+        });
+      }), items.length)}
     </section>
   `;
   bindProspectMediaPage(view);
@@ -6271,10 +6562,10 @@ function renderProspectMedia() {
 function renderOwnedBudget() {
   const view = document.getElementById("ownedBudgetView");
   if (!view) return;
-  const owned = ownedProjects();
-  const project = primaryOwnedProject();
+  const budgetProperties = activeProperties();
+  const project = budgetProperties.find((property) => property.id === selectedId) || budgetProperties[0] || null;
   if (!project) {
-    view.innerHTML = `<section class="owned-page">${ownedPageHead("Budget", "Track all income, expenses, and budget details for your flip.")}${ownedEmptyState("No project budget yet")}</section>`;
+    view.innerHTML = `<section class="owned-page">${ownedPageHead("Budget", "Track all income, expenses, and budget details for any property.")}${ownedEmptyState("No property budget yet")}</section>`;
     bindOwnedEmptyState(view);
     return;
   }
@@ -6290,7 +6581,7 @@ function renderOwnedBudget() {
   const rows = categoryRows.length ? categoryRows : [{ category: "Rehab Budget", estimated: budget.estimated, actual: budget.actual, remaining: budget.difference, used: budget.percentUsed }];
   view.innerHTML = `
     <section class="owned-page budget-page">
-      ${ownedPageHead("Budget", "Track all income, expenses, and budget details for your flip.", `
+      ${ownedPageHead("Budget", "Track all income, expenses, and budget details for any property.", `
         <button class="secondary-link compact" type="button">${new Date().toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}</button>
         <button class="primary compact" type="button" id="ownedAddTransactionBtn">+ Add Transaction</button>
       `)}
@@ -6304,7 +6595,7 @@ function renderOwnedBudget() {
         ].map(([label, value, meta]) => `<article><span>${label}</span><strong>${value}</strong><em>${meta}</em></article>`).join("")}
       </div>
       <div class="owned-task-composer" id="ownedTransactionComposer" hidden>
-        <select id="ownedTransactionProject">${owned.map((property) => `<option value="${property.id}" ${property.id === project.id ? "selected" : ""}>${escapeHtml(property.address)}</option>`).join("")}</select>
+        <select id="ownedTransactionProject">${budgetProperties.map((property) => `<option value="${property.id}" ${property.id === project.id ? "selected" : ""}>${escapeHtml(property.address)}${isOwnedProperty(property) ? " (Owned)" : " (Prospect)"}</option>`).join("")}</select>
         <select id="ownedTransactionCategory">${FLIP_BUDGET_CATEGORIES.map((category) => `<option>${escapeHtml(category)}</option>`).join("")}</select>
         <input id="ownedTransactionEstimate" class="money-input" placeholder="Estimated budget">
         <input id="ownedTransactionActual" class="money-input" placeholder="Actual cost">
@@ -6359,21 +6650,21 @@ function renderOwnedBudget() {
 function renderOwnedNotes() {
   const view = document.getElementById("ownedNotesView");
   if (!view) return;
-  const owned = ownedProjects();
-  if (!owned.length) {
-    view.innerHTML = `<section class="owned-page">${ownedPageHead("Notes", "All project notes, details, ideas, and important information in one place.")}${ownedEmptyState("No project notes yet")}</section>`;
+  const noteProperties = activeProperties();
+  if (!noteProperties.length) {
+    view.innerHTML = `<section class="owned-page">${ownedPageHead("Notes", "All property notes, details, ideas, and important information in one place.")}${ownedEmptyState("No properties yet")}</section>`;
     bindOwnedEmptyState(view);
     return;
   }
   const categories = ["General", "Contractors", "Materials", "Finishes", "Permits", "Listing", "Ideas"];
   const rows = noteLog
-    .filter((note) => owned.some((property) => property.id === note.property_id))
+    .filter((note) => !note.property_id || noteProperties.some((property) => property.id === note.property_id))
     .sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)));
   const selected = rows[0] || null;
   const noteTitle = (note) => String(note?.body || "Project Note").split(/[.\n]/)[0].slice(0, 44) || "Project Note";
   view.innerHTML = `
     <section class="owned-page notes-page">
-      ${ownedPageHead("Notes", "All project notes, details, ideas, and important information in one place.", `
+      ${ownedPageHead("Notes", "All property notes, details, ideas, and important information in one place.", `
         <input class="owned-search-input" id="ownedNoteSearch" placeholder="Search notes...">
         <button class="primary compact" type="button" id="ownedNewNoteBtn">+ New Note</button>
       `)}
@@ -6382,7 +6673,7 @@ function renderOwnedNotes() {
         ${categories.map((category) => `<button type="button">${category} <span>${rows.filter((note) => note.type === category).length}</span></button>`).join("")}
       </div>
       <div class="owned-task-composer" id="ownedNoteComposer" hidden>
-        <select id="ownedNoteProject">${owned.map((property) => `<option value="${property.id}">${escapeHtml(property.address)}</option>`).join("")}</select>
+        <select id="ownedNoteProject"><option value="">General / not tied to a property</option>${noteProperties.map((property) => `<option value="${property.id}">${escapeHtml(property.address)}${isOwnedProperty(property) ? " (Owned)" : " (Prospect)"}</option>`).join("")}</select>
         <select id="ownedNoteAuthor">${teamMembers.map((member) => `<option>${escapeHtml(member.name)}</option>`).join("")}</select>
         <select id="ownedNoteType">${categories.map((category) => `<option>${escapeHtml(category)}</option>`).join("")}</select>
         <textarea id="ownedNoteBody" placeholder="Lockbox codes, paint colors, contractor notes, materials, problems found, permit notes, listing ideas..."></textarea>
@@ -6395,9 +6686,9 @@ function renderOwnedNotes() {
           ${rows.map((note, index) => {
             const property = propertyById(note.property_id);
             return `
-              <button class="owned-note-item ${index === 0 ? "active" : ""}" type="button" data-property-id="${escapeHtml(note.property_id)}">
+              <button class="owned-note-item ${index === 0 ? "active" : ""}" type="button" ${note.property_id ? `data-property-id="${escapeHtml(note.property_id)}"` : ""}>
                 <i>${escapeHtml((note.type || "G").slice(0, 1))}</i>
-                <span><strong>${escapeHtml(noteTitle(note))}</strong><em>${escapeHtml(note.body || "").slice(0, 90)}${String(note.body || "").length > 90 ? "..." : ""}</em><small>${escapeHtml(property?.address || "Project")} · ${formatNoteTime(note.created_at)}</small></span>
+                <span><strong>${escapeHtml(noteTitle(note))}</strong><em>${escapeHtml(note.body || "").slice(0, 90)}${String(note.body || "").length > 90 ? "..." : ""}</em><small>${escapeHtml(property?.address || "General")} · ${formatNoteTime(note.created_at)}</small></span>
                 <b>⋮</b>
               </button>
             `;
@@ -6409,10 +6700,10 @@ function renderOwnedNotes() {
             <h3>${escapeHtml(noteTitle(selected))}</h3>
             <p>${formatNoteTime(selected.created_at)} · ${escapeHtml(selected.author || "Team")}</p>
             <div>${escapeHtml(selected.body || "").replace(/\n/g, "<br>")}</div>
-            <div class="flip-note-tags"><span>${escapeHtml(selected.type || "General")}</span><span>${escapeHtml(propertyById(selected.property_id)?.address || "Project")}</span><button class="secondary-link compact" type="button">+ Add Tag</button></div>
+            <div class="flip-note-tags"><span>${escapeHtml(selected.type || "General")}</span><span>${escapeHtml(propertyById(selected.property_id)?.address || "General")}</span><button class="secondary-link compact" type="button">+ Add Tag</button></div>
           ` : `
             <h3>Project Notes</h3>
-            <div>Add lockbox codes, paint colors, contractor notes, material selections, permit notes, problems found, and listing ideas.</div>
+            <div>Add call notes, lockbox codes, paint colors, contractor notes, material selections, permit notes, problems found, and listing ideas.</div>
           `}
         </article>
       </div>
@@ -6450,6 +6741,103 @@ function renderOwnedReports() {
   bindOwnedContextLinks(view);
 }
 
+function renderOwnedVendors() {
+  const view = document.getElementById("ownedVendorsView");
+  if (!view) return;
+  const query = String(ownedVendorSearchQuery || "").trim().toLowerCase();
+  const filtered = query
+    ? vendors.filter((vendor) => [
+      vendor.companyName,
+      vendor.contactPerson,
+      vendor.phone,
+      vendor.email,
+      vendor.address,
+      vendorWorkTypeLabel(vendor)
+    ].filter(Boolean).join(" ").toLowerCase().includes(query))
+    : vendors;
+  const selectedVendor = vendors.find((vendor) => vendor.id === selectedOwnedVendorId) || null;
+  const selectedWorkTypes = new Set(vendorWorkTypesFor(selectedVendor));
+  const workTypeOptions = uniqueWorkTypes([...vendorWorkTypes, ...vendorWorkTypesFor(selectedVendor)]).map((type) => `
+    <label class="vendor-work-option"><input type="checkbox" name="ownedVendorWorkType" value="${escapeHtml(type)}" ${selectedWorkTypes.has(type) ? "checked" : ""}><span>${escapeHtml(type)}</span></label>
+  `).join("");
+  view.innerHTML = `
+    <section class="owned-page owned-vendors-page">
+      ${ownedPageHead("Vendors", "Manage your vendor information.", `<button class="primary compact" type="button" id="ownedAddVendorTop"><span>+</span> Add Vendor</button>`)}
+      <section class="owned-table-panel vendor-form-panel">
+        <form id="ownedVendorForm">
+          <div class="vendor-form-head">
+            <h3>${selectedVendor ? "Edit Vendor" : "Add New Vendor"}</h3>
+            <span class="form-status" id="ownedVendorStatus" role="status"></span>
+          </div>
+          <input id="ownedVendorId" type="hidden" value="${escapeHtml(selectedVendor?.id || "")}">
+          <div class="vendor-form-grid">
+            <label><span>Company Name</span><input id="ownedVendorCompany" required placeholder="Enter company name" value="${escapeHtml(selectedVendor?.companyName || "")}"></label>
+            <label><span>Contact Person</span><input id="ownedVendorContact" placeholder="Enter person name" value="${escapeHtml(selectedVendor?.contactPerson || "")}"></label>
+            <label><span>Phone Number</span><input id="ownedVendorPhone" placeholder="(555) 123-4567" value="${escapeHtml(selectedVendor?.phone || "")}"></label>
+            <label><span>Email</span><input id="ownedVendorEmail" type="email" placeholder="name@company.com" value="${escapeHtml(selectedVendor?.email || "")}"></label>
+            <label class="wide"><span>Address</span><input id="ownedVendorAddress" placeholder="123 Main St, City, State, ZIP" value="${escapeHtml(selectedVendor?.address || "")}"></label>
+            <fieldset class="wide vendor-work-field">
+              <legend>Type of Work</legend>
+              <details class="vendor-work-dropdown" id="ownedVendorWorkDropdown">
+                <summary><span id="ownedVendorWorkSummary">${escapeHtml(vendorWorkTypeSummary(selectedVendor))}</span><span data-icon="chevron"></span></summary>
+                <div class="vendor-work-menu">
+                  <div class="vendor-work-options" id="ownedVendorWorkTypes">${workTypeOptions}</div>
+                  <div class="vendor-work-add">
+                    <input id="ownedVendorNewWorkType" placeholder="Add another type of work">
+                    <button class="secondary-link compact" type="button" id="ownedVendorAddWorkType">Add Option</button>
+                  </div>
+                </div>
+              </details>
+            </fieldset>
+          </div>
+          <div class="vendor-form-actions">
+            <button class="secondary-link compact" type="reset" id="ownedVendorCancel">Cancel</button>
+            <button class="primary compact" type="submit" id="ownedVendorSubmit">${selectedVendor ? "Update Vendor" : "Save Vendor"}</button>
+          </div>
+        </form>
+      </section>
+      <section class="owned-table-panel vendor-list-panel">
+        <div class="vendor-list-head">
+          <h3>All Vendors</h3>
+          <label class="owned-vendor-search"><span data-icon="search-user"></span><input id="ownedVendorSearch" type="search" placeholder="Search vendors..." value="${escapeHtml(query)}"></label>
+        </div>
+        <div class="owned-vendor-table">
+          <div class="owned-vendor-row owned-vendor-header">
+            <span>Company Name</span>
+            <span>Contact Person</span>
+            <span>Phone</span>
+            <span>Email</span>
+            <span>Type of Work</span>
+            <span>Actions</span>
+          </div>
+          ${filtered.map((vendor) => `
+            <div class="owned-vendor-row owned-vendor-record ${selectedOwnedVendorId === vendor.id ? "selected" : ""}" role="button" tabindex="0" data-open-vendor="${escapeHtml(vendor.id)}" aria-label="Open ${escapeHtml(vendor.companyName || "vendor")}">
+              <strong>${escapeHtml(vendor.companyName || "")}</strong>
+              <span>${escapeHtml(vendor.contactPerson || "")}</span>
+              <span>${callLink(vendor.phone)}</span>
+              <span>${escapeHtml(vendor.email || "")}</span>
+              <span>${escapeHtml(vendorWorkTypeLabel(vendor))}</span>
+              <span class="vendor-actions">
+                <button type="button" data-edit-vendor="${escapeHtml(vendor.id)}" aria-label="Edit ${escapeHtml(vendor.companyName || "vendor")}"><span data-icon="square-pen"></span></button>
+                <button class="danger" type="button" data-delete-vendor="${escapeHtml(vendor.id)}" aria-label="Delete ${escapeHtml(vendor.companyName || "vendor")}"><span data-icon="trash"></span></button>
+              </span>
+            </div>
+          `).join("") || `<p class="empty compact-empty">No vendors match that search.</p>`}
+        </div>
+        <div class="vendor-list-foot">
+          <span>Showing ${filtered.length ? `1 to ${filtered.length}` : "0"} of ${vendors.length} vendors</span>
+          <div class="vendor-pagination" aria-label="Vendor pages">
+            <button type="button" disabled>&lt;</button>
+            <button type="button" class="active">1</button>
+            <button type="button" disabled>&gt;</button>
+          </div>
+        </div>
+      </section>
+    </section>
+  `;
+  bindOwnedVendorsPage(view);
+}
+
 function renderOwnedSettings() {
   const view = document.getElementById("ownedSettingsView");
   if (!view) return;
@@ -6460,6 +6848,7 @@ function renderOwnedSettings() {
         ${[
           ["Project Ownership", "Assign project owners from the project detail page or sale details modal.", "Open Projects", "homesOwned"],
           ["Task Defaults", "Use demo, rough construction, finishes, landscaping, staging, and listing phases.", "View Tasks", "tasks"],
+          ["Vendors", "Keep contractor contact details and trade specialties available from Homes Owned.", "View Vendors", "ownedVendors"],
           ["Budget Defaults", "Holding costs and sale assumptions come from underwriting until project-specific numbers are entered.", "View Budget", "ownedBudget"],
           ["Media Organization", "Group photos and videos by room and phase so listing content is easy to find.", "View Media", "ownedMedia"]
         ].map(([title, body, action, viewName]) => `<article class="owned-side-card"><h3>${title}</h3><p>${body}</p><button class="secondary-link compact" type="button" data-settings-view="${viewName}">${action}</button></article>`).join("")}
@@ -6493,9 +6882,29 @@ function bindOwnedContextLinks(root) {
 
 function bindOwnedTasksPage(root) {
   const openCreateForm = () => {
-    const firstOwned = ownedProjects()[0];
-    taskFormState = { open: true, mode: "create", propertyId: firstOwned?.id || "", taskId: "" };
+    const firstProperty = activeProperties()[0];
+    taskFormState = { open: true, mode: "create", propertyId: selectedId || firstProperty?.id || "", taskId: "" };
     renderTasks();
+  };
+  const applyTaskTableFilters = () => {
+    const query = root.querySelector("#ownedTaskSearch")?.value.trim().toLowerCase() || "";
+    const activeFilter = root.querySelector("[data-task-filter].active")?.dataset.taskFilter || "All";
+    const projectId = root.querySelector("#tasksProjectFilter")?.value || "";
+    let shown = 0;
+    root.querySelectorAll("[data-task-row]").forEach((row) => {
+      const [propertyId] = String(row.dataset.ownedTaskKey || "").split("::");
+      const matchesQuery = !query || row.textContent.toLowerCase().includes(query);
+      const matchesProject = !projectId || propertyId === projectId;
+      const matchesFilter = activeFilter === "All"
+        || (activeFilter === "Mine" && row.dataset.taskAssignee === currentUser.name)
+        || (activeFilter === "Overdue" && row.dataset.taskOverdue === "true")
+        || (activeFilter === "Completed" && row.dataset.taskStatus === "Done");
+      const visible = matchesQuery && matchesProject && matchesFilter;
+      row.hidden = !visible;
+      if (visible) shown += 1;
+    });
+    const label = root.querySelector("#tasksShowingLabel");
+    if (label) label.textContent = `Showing ${shown ? `1 to ${shown}` : "0"} of ${root.querySelectorAll("[data-task-row]").length} tasks`;
   };
   root.querySelector("#ownedNewTaskBtn")?.addEventListener("click", openCreateForm);
   root.querySelector("#emptyNewTaskBtn")?.addEventListener("click", openCreateForm);
@@ -6507,18 +6916,22 @@ function bindOwnedTasksPage(root) {
     });
   });
   root.querySelector("#ownedTaskSearch")?.addEventListener("input", (event) => {
-    const query = event.target.value.trim().toLowerCase();
-    root.querySelectorAll("[data-owned-task-key]").forEach((card) => {
-      card.hidden = query && !card.textContent.toLowerCase().includes(query);
+    applyTaskTableFilters();
+  });
+  root.querySelector("#tasksProjectFilter")?.addEventListener("change", applyTaskTableFilters);
+  root.querySelectorAll("[data-edit-task-key]").forEach((button) => {
+    button.addEventListener("click", (event) => {
+      event.stopPropagation();
+      selectedOwnedTaskKey = button.dataset.editTaskKey;
+      const [propertyId, taskId] = selectedOwnedTaskKey.split("::");
+      taskFormState = { open: true, mode: "edit", propertyId, taskId };
+      renderTasks();
     });
   });
   root.querySelectorAll("[data-task-filter]").forEach((button) => {
     button.addEventListener("click", () => {
       root.querySelectorAll("[data-task-filter]").forEach((item) => item.classList.toggle("active", item === button));
-      const filter = button.dataset.taskFilter;
-      root.querySelectorAll("[data-owned-task-key]").forEach((card) => {
-        card.hidden = filter !== "All" && card.dataset.taskStatus !== filter;
-      });
+      applyTaskTableFilters();
     });
   });
   root.querySelector("#ownedEditTaskBtn")?.addEventListener("click", () => {
@@ -6568,9 +6981,24 @@ function bindOwnedTasksPage(root) {
     taskFormState = { open: false, mode: "create", propertyId: "", taskId: "" };
     renderTasks();
   });
+  root.querySelectorAll("input[name='taskPriorityChoice']").forEach((input) => {
+    input.addEventListener("change", () => {
+      const select = root.querySelector("#taskFormPriority");
+      if (select) select.value = input.value;
+    });
+  });
+  root.querySelectorAll(".task-priority-control label").forEach((label) => {
+    label.addEventListener("click", () => {
+      const input = label.querySelector("input[name='taskPriorityChoice']");
+      const select = root.querySelector("#taskFormPriority");
+      if (!input) return;
+      input.checked = true;
+      if (select) select.value = input.value;
+    });
+  });
   root.querySelector("#taskFormSave")?.addEventListener("click", async () => {
     const status = root.querySelector("#taskFormStatusMsg");
-    const propertyId = root.querySelector("#taskFormProject")?.value || taskFormState.propertyId || ownedProjects()[0]?.id || "";
+    const propertyId = root.querySelector("#taskFormProject")?.value || taskFormState.propertyId || activeProperties()[0]?.id || "";
     const property = propertyById(propertyId);
     const name = root.querySelector("#taskFormName")?.value.trim();
     if (!name) {
@@ -6579,7 +7007,7 @@ function bindOwnedTasksPage(root) {
       return;
     }
     if (!property) {
-      if (status) status.textContent = "No owned project is available for this task.";
+      if (status) status.textContent = "No property is available for this task.";
       return;
     }
     const payload = {
@@ -6642,10 +7070,31 @@ function bindOwnedTasksPage(root) {
 }
 
 function bindOwnedMediaPage(root) {
+  bindMediaGalleryControls(root);
+  const closeMediaModal = () => {
+    const composer = root.querySelector("#ownedMediaComposer");
+    if (composer) composer.hidden = true;
+  };
   root.querySelector("#ownedNewMediaBtn")?.addEventListener("click", () => {
     const composer = root.querySelector("#ownedMediaComposer");
-    if (composer) composer.hidden = !composer.hidden;
-    root.querySelector("#ownedMediaUrl")?.focus();
+    if (composer) composer.hidden = false;
+    root.querySelector("#ownedMediaDropZone")?.focus();
+  });
+  root.querySelectorAll("[data-media-close]").forEach((button) => {
+    button.addEventListener("click", closeMediaModal);
+  });
+  root.querySelector("#ownedMediaDropZone")?.addEventListener("click", () => {
+    root.querySelector("#ownedMediaFile")?.click();
+  });
+  root.querySelector("#ownedMediaFile")?.addEventListener("change", () => {
+    const file = root.querySelector("#ownedMediaFile")?.files?.[0];
+    const dropZone = root.querySelector("#ownedMediaDropZone");
+    if (file && dropZone) {
+      dropZone.querySelector("strong").textContent = file.name;
+      dropZone.querySelector("em").textContent = "Ready to upload";
+      const typeInput = root.querySelector("#ownedMediaType");
+      if (typeInput) typeInput.value = file.type?.startsWith("video/") ? "Video" : "Photo";
+    }
   });
   root.querySelector("#ownedSaveMediaBtn")?.addEventListener("click", async () => {
     const status = root.querySelector("#ownedMediaStatusMsg");
@@ -6655,7 +7104,7 @@ function bindOwnedMediaPage(root) {
     const file = fileInput?.files?.[0] || null;
     let url = urlInput?.value.trim() || "";
     if (!property || (!url && !file)) {
-      if (status) status.textContent = "Pick a project and choose a file or paste a media link.";
+      if (status) status.textContent = "Pick a property and choose a file or paste a media link.";
       return;
     }
     if (status) status.textContent = "Adding...";
@@ -6666,17 +7115,37 @@ function bindOwnedMediaPage(root) {
         id: crypto.randomUUID(),
         url,
         type: upload?.mimeType?.startsWith("video/") ? "Video" : root.querySelector("#ownedMediaType")?.value || "Photo",
-        room: root.querySelector("#ownedMediaRoom")?.value || "Kitchen",
-        phase: root.querySelector("#ownedMediaPhase")?.value || "Progress",
+        room: root.querySelector("#ownedMediaRoom")?.value || "General",
+        phase: root.querySelector("#ownedMediaPhase")?.value || "Site Progress",
         caption: root.querySelector("#ownedMediaCaption")?.value.trim() || upload?.originalName || null,
         mimeType: upload?.mimeType || null,
         createdAt: new Date().toISOString()
       });
+      selectedId = property.id;
       renderOwnedMedia();
       renderFlipDashboard();
     } catch (error) {
       if (status) status.textContent = error.message || "Could not add media.";
     }
+  });
+}
+
+function bindMediaGalleryControls(root) {
+  const applyFilter = (filter) => {
+    let shown = 0;
+    root.querySelectorAll("[data-media-card]").forEach((card) => {
+      const visible = filter === "all" || (filter === "album" ? true : card.dataset.mediaKind === filter);
+      card.hidden = !visible;
+      if (visible) shown += 1;
+    });
+    const label = root.querySelector("#mediaShowingLabel");
+    if (label) label.textContent = `Showing ${shown ? `1 to ${shown}` : "0"} of ${root.querySelectorAll("[data-media-card]").length} items`;
+  };
+  root.querySelectorAll("[data-media-filter]").forEach((button) => {
+    button.addEventListener("click", () => {
+      root.querySelectorAll("[data-media-filter]").forEach((item) => item.classList.toggle("active", item === button));
+      applyFilter(button.dataset.mediaFilter || "all");
+    });
   });
 }
 
@@ -6687,7 +7156,7 @@ async function saveProspectMediaItem(payload) {
     storeProspectMedia();
     return draft;
   }
-  const response = await fetch("/api/prospect-media", {
+  const response = await apiFetch("/api/prospect-media", {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(draft)
@@ -6711,7 +7180,7 @@ async function deleteProspectMediaItem(id) {
     updateNavCounts();
     return;
   }
-  const response = await fetch(`/api/prospect-media/${id}`, { method: "DELETE" });
+  const response = await apiFetch(`/api/prospect-media/${id}`, { method: "DELETE" });
   if (!response.ok && response.status !== 204) {
     const body = await response.json().catch(() => ({}));
     alert(body.error || "Could not delete media.");
@@ -6723,6 +7192,7 @@ async function deleteProspectMediaItem(id) {
 }
 
 function bindProspectMediaPage(root) {
+  bindMediaGalleryControls(root);
   root.querySelector("#prospectNewMediaBtn")?.addEventListener("click", () => {
     const composer = root.querySelector("#prospectMediaComposer");
     if (composer) composer.hidden = !composer.hidden;
@@ -6777,7 +7247,7 @@ function bindOwnedBudgetPage(root) {
     const status = root.querySelector("#ownedTransactionStatusMsg");
     const property = propertyById(root.querySelector("#ownedTransactionProject")?.value);
     if (!property) {
-      if (status) status.textContent = "Pick a project.";
+      if (status) status.textContent = "Pick a property.";
       return;
     }
     if (status) status.textContent = "Adding...";
@@ -6790,6 +7260,7 @@ function bindOwnedBudgetPage(root) {
       notes: root.querySelector("#ownedTransactionNotes")?.value.trim() || null,
       createdAt: new Date().toISOString()
     });
+    selectedId = property.id;
     renderOwnedBudget();
     renderFlipDashboard();
   });
@@ -6809,29 +7280,31 @@ function bindOwnedNotesPage(root) {
   });
   root.querySelector("#ownedSaveNoteBtn")?.addEventListener("click", async () => {
     const status = root.querySelector("#ownedNoteStatusMsg");
-    const property = propertyById(root.querySelector("#ownedNoteProject")?.value);
+    const propertyId = root.querySelector("#ownedNoteProject")?.value || "";
+    const property = propertyId ? propertyById(propertyId) : null;
     const body = root.querySelector("#ownedNoteBody")?.value.trim();
-    if (!property || !body) {
-      if (status) status.textContent = "Pick a project and enter a note.";
+    if (!body) {
+      if (status) status.textContent = "Enter a note.";
+      root.querySelector("#ownedNoteBody")?.focus();
       return;
     }
     if (status) status.textContent = "Saving...";
     const draft = normalizeNote({
       id: crypto.randomUUID(),
-      property_id: property.id,
+      property_id: property?.id || "",
       author: root.querySelector("#ownedNoteAuthor")?.value || "Team",
       type: root.querySelector("#ownedNoteType")?.value || "General",
       body,
       created_at: new Date().toISOString()
     });
-    if (!apiAvailable) {
+    if (!property || !apiAvailable) {
       noteLog.unshift(draft);
       storeLocalState();
       renderOwnedNotes();
       renderFlipDashboard();
       return;
     }
-    const response = await fetch(`/api/properties/${property.id}/notes`, {
+    const response = await apiFetch(`/api/properties/${property.id}/notes`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ author: draft.author, type: draft.type, body: draft.body })
@@ -6854,8 +7327,236 @@ function bindOwnedNotesPage(root) {
   bindOwnedContextLinks(root);
 }
 
+async function saveVendorRecord(vendor) {
+  const draft = normalizeVendor(vendor);
+  if (!apiAvailable) {
+    const existingIndex = vendors.findIndex((item) => item.id === draft.id);
+    if (existingIndex >= 0) vendors[existingIndex] = draft;
+    else vendors = [draft, ...vendors];
+    storeVendors();
+    return draft;
+  }
+  const isExisting = vendors.some((item) => item.id === draft.id);
+  const response = await apiFetch(isExisting ? `/api/vendors/${encodeURIComponent(draft.id)}` : "/api/vendors", {
+    method: isExisting ? "PUT" : "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(draft)
+  });
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({}));
+    throw new Error(body.error || "Could not save vendor.");
+  }
+  const { vendor: savedVendor } = await response.json();
+  const saved = normalizeVendor(savedVendor);
+  const existingIndex = vendors.findIndex((item) => item.id === saved.id);
+  if (existingIndex >= 0) vendors[existingIndex] = saved;
+  else vendors = [saved, ...vendors];
+  return saved;
+}
+
+async function deleteVendorRecord(id) {
+  if (!id) return;
+  if (!apiAvailable) {
+    vendors = vendors.filter((item) => item.id !== id);
+    storeVendors();
+    return;
+  }
+  const response = await apiFetch(`/api/vendors/${encodeURIComponent(id)}`, { method: "DELETE" });
+  if (!response.ok && response.status !== 204) {
+    const body = await response.json().catch(() => ({}));
+    throw new Error(body.error || "Could not delete vendor.");
+  }
+  vendors = vendors.filter((item) => item.id !== id);
+}
+
+function bindOwnedVendorsPage(root) {
+  const form = root.querySelector("#ownedVendorForm");
+  const status = root.querySelector("#ownedVendorStatus");
+  const checkedVendorWorkTypes = () => [...root.querySelectorAll("input[name='ownedVendorWorkType']:checked")].map((input) => input.value);
+  const updateWorkTypeSummary = () => {
+    const summary = root.querySelector("#ownedVendorWorkSummary");
+    if (!summary) return;
+    const selected = checkedVendorWorkTypes();
+    if (!selected.length) summary.textContent = "Select work types";
+    else if (selected.length === 1) summary.textContent = selected[0];
+    else if (selected.length === 2) summary.textContent = selected.join(", ");
+    else summary.textContent = `${selected.length} types selected`;
+  };
+  const setVendorForm = (vendor = null) => {
+    root.querySelector("#ownedVendorId").value = vendor?.id || "";
+    root.querySelector("#ownedVendorCompany").value = vendor?.companyName || "";
+    root.querySelector("#ownedVendorContact").value = vendor?.contactPerson || "";
+    root.querySelector("#ownedVendorPhone").value = vendor?.phone || "";
+    root.querySelector("#ownedVendorEmail").value = vendor?.email || "";
+    root.querySelector("#ownedVendorAddress").value = vendor?.address || "";
+    const selected = new Set(vendorWorkTypesFor(vendor));
+    root.querySelectorAll("input[name='ownedVendorWorkType']").forEach((input) => {
+      input.checked = selected.has(input.value);
+    });
+    updateWorkTypeSummary();
+    root.querySelector("#ownedVendorWorkDropdown")?.removeAttribute("open");
+    root.querySelector(".vendor-form-head h3").textContent = vendor ? "Edit Vendor" : "Add New Vendor";
+    root.querySelector("#ownedVendorSubmit").textContent = vendor ? "Update Vendor" : "Save Vendor";
+    if (status) status.textContent = "";
+  };
+  root.querySelector("#ownedVendorAddWorkType")?.addEventListener("click", () => {
+    const input = root.querySelector("#ownedVendorNewWorkType");
+    const type = input?.value.trim();
+    if (!type) return;
+    if (!vendorWorkTypes.includes(type)) {
+      vendorWorkTypes = uniqueWorkTypes([...vendorWorkTypes, type]);
+      saveVendorWorkTypes();
+      const wrapper = document.createElement("label");
+      wrapper.className = "vendor-work-option";
+      const checkbox = document.createElement("input");
+      checkbox.type = "checkbox";
+      checkbox.name = "ownedVendorWorkType";
+      checkbox.value = type;
+      checkbox.checked = true;
+      const text = document.createElement("span");
+      text.textContent = type;
+      wrapper.append(checkbox, text);
+      root.querySelector("#ownedVendorWorkTypes")?.append(wrapper);
+    } else {
+      const existing = [...root.querySelectorAll("input[name='ownedVendorWorkType']")]
+        .find((input) => input.value.toLowerCase() === type.toLowerCase());
+      if (existing) existing.checked = true;
+    }
+    updateWorkTypeSummary();
+    input.value = "";
+  });
+  root.querySelector("#ownedVendorWorkTypes")?.addEventListener("change", updateWorkTypeSummary);
+  const workDropdown = root.querySelector("#ownedVendorWorkDropdown");
+  if (workDropdown) {
+    const closeWorkDropdownOnOutsidePointer = (event) => {
+      if (!workDropdown.open) return;
+      if (workDropdown.contains(event.target)) return;
+      workDropdown.removeAttribute("open");
+    };
+    const closeWorkDropdownOnFocusOut = (event) => {
+      if (!workDropdown.open) return;
+      const nextTarget = event.relatedTarget;
+      if (nextTarget && workDropdown.contains(nextTarget)) return;
+      workDropdown.removeAttribute("open");
+    };
+    workDropdown.addEventListener("toggle", () => {
+      if (workDropdown.open) {
+        document.addEventListener("pointerdown", closeWorkDropdownOnOutsidePointer);
+        workDropdown.addEventListener("focusout", closeWorkDropdownOnFocusOut);
+        return;
+      }
+      document.removeEventListener("pointerdown", closeWorkDropdownOnOutsidePointer);
+      workDropdown.removeEventListener("focusout", closeWorkDropdownOnFocusOut);
+    });
+    workDropdown.addEventListener("keydown", (event) => {
+      if (event.key !== "Escape") return;
+      workDropdown.removeAttribute("open");
+      workDropdown.querySelector("summary")?.focus();
+    });
+  }
+  root.querySelector("#ownedAddVendorTop")?.addEventListener("click", () => {
+    selectedOwnedVendorId = "";
+    setVendorForm();
+    root.querySelector(".vendor-form-panel")?.scrollIntoView({ behavior: "smooth", block: "start" });
+    root.querySelector("#ownedVendorCompany")?.focus();
+  });
+  root.querySelector("#ownedVendorSearch")?.addEventListener("input", (event) => {
+    ownedVendorSearchQuery = event.target.value;
+    renderOwnedVendors();
+    setTimeout(() => {
+      const search = document.getElementById("ownedVendorSearch");
+      search?.focus();
+      search?.setSelectionRange(search.value.length, search.value.length);
+    }, 0);
+  });
+  form?.addEventListener("reset", () => {
+    selectedOwnedVendorId = "";
+    setTimeout(() => setVendorForm(), 0);
+  });
+  form?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const selectedTypes = uniqueWorkTypes(checkedVendorWorkTypes());
+    const companyName = root.querySelector("#ownedVendorCompany")?.value.trim() || "";
+    if (!companyName) {
+      if (status) status.textContent = "Company name is required.";
+      root.querySelector("#ownedVendorCompany")?.focus();
+      return;
+    }
+    vendorWorkTypes = uniqueWorkTypes([...vendorWorkTypes, ...selectedTypes]);
+    saveVendorWorkTypes();
+    const vendor = {
+      id: root.querySelector("#ownedVendorId")?.value || "",
+      companyName,
+      contactPerson: root.querySelector("#ownedVendorContact")?.value.trim() || "",
+      phone: root.querySelector("#ownedVendorPhone")?.value.trim() || "",
+      email: root.querySelector("#ownedVendorEmail")?.value.trim() || "",
+      address: root.querySelector("#ownedVendorAddress")?.value.trim() || "",
+      typeOfWork: selectedTypes
+    };
+    try {
+      if (status) status.textContent = "Saving...";
+      const saved = await saveVendorRecord(vendor);
+      selectedOwnedVendorId = saved.id;
+      updateNavCounts();
+      renderOwnedVendors();
+    } catch (error) {
+      if (status) status.textContent = error.message || "Could not save vendor.";
+    }
+  });
+  root.querySelectorAll("[data-open-vendor]").forEach((row) => {
+    const openVendor = () => {
+      const vendor = vendors.find((item) => item.id === row.dataset.openVendor);
+      if (!vendor) return;
+      selectedOwnedVendorId = vendor.id;
+      setVendorForm(vendor);
+      root.querySelectorAll("[data-open-vendor]").forEach((item) => item.classList.toggle("selected", item.dataset.openVendor === vendor.id));
+      root.querySelector(".vendor-form-panel")?.scrollIntoView({ behavior: "smooth", block: "start" });
+      root.querySelector("#ownedVendorCompany")?.focus();
+    };
+    row.addEventListener("click", (event) => {
+      if (event.target.closest("a, button")) return;
+      openVendor();
+    });
+    row.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter" && event.key !== " ") return;
+      event.preventDefault();
+      openVendor();
+    });
+  });
+  root.querySelectorAll("[data-edit-vendor]").forEach((button) => {
+    button.addEventListener("click", (event) => {
+      event.stopPropagation();
+      const vendor = vendors.find((item) => item.id === button.dataset.editVendor);
+      if (!vendor) return;
+      selectedOwnedVendorId = vendor.id;
+      setVendorForm(vendor);
+      root.querySelectorAll("[data-open-vendor]").forEach((item) => item.classList.toggle("selected", item.dataset.openVendor === vendor.id));
+      root.querySelector(".vendor-form-panel")?.scrollIntoView({ behavior: "smooth", block: "start" });
+      root.querySelector("#ownedVendorCompany")?.focus();
+    });
+  });
+  root.querySelectorAll("[data-delete-vendor]").forEach((button) => {
+    button.addEventListener("click", async (event) => {
+      event.stopPropagation();
+      const vendor = vendors.find((item) => item.id === button.dataset.deleteVendor);
+      if (!vendor) return;
+      if (!confirm(`Delete ${vendor.companyName}?`)) return;
+      try {
+        await deleteVendorRecord(vendor.id);
+        if (selectedOwnedVendorId === vendor.id) selectedOwnedVendorId = "";
+        updateNavCounts();
+        renderOwnedVendors();
+      } catch (error) {
+        if (status) status.textContent = error.message || "Could not delete vendor.";
+      }
+    });
+  });
+  hydrateIcons();
+}
+
 function renderOwnedContextViews() {
   renderOwnedCalendar();
+  renderOwnedVendors();
   renderOwnedMedia();
   renderOwnedBudget();
   renderOwnedNotes();
@@ -6950,7 +7651,7 @@ async function saveOwnedForProperty(propertyIdValue, owned) {
     storeLocalState();
     return;
   }
-  const response = await fetch(`/api/properties/${propertyIdValue}/owned`, {
+  const response = await apiFetch(`/api/properties/${propertyIdValue}/owned`, {
     method: "PUT",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ owned, timeline })
@@ -7142,7 +7843,7 @@ function bindEvents() {
         renderAll();
         return;
       }
-      const response = await fetch("/api/properties", {
+      const response = await apiFetch("/api/properties", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify(body)
@@ -7310,7 +8011,7 @@ function bindEvents() {
       renderTasks();
       return;
     }
-    const response = await fetch(`/api/properties/${property.id}/tasks`, {
+    const response = await apiFetch(`/api/properties/${property.id}/tasks`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
@@ -7346,7 +8047,7 @@ function bindEvents() {
       renderDocuments();
       return;
     }
-    const response = await fetch(`/api/properties/${property.id}/documents`, {
+    const response = await apiFetch(`/api/properties/${property.id}/documents`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
@@ -7398,89 +8099,145 @@ function startApp() {
 }
 
 // Login gate
-const LOGIN_KEY = "sc_user";
 const loginScreen = document.getElementById("loginScreen");
 const appShell = document.querySelector(".app-shell");
-const loginForm = document.getElementById("loginForm");
 const loginError = document.getElementById("loginError");
 const sidebarUser = document.getElementById("sidebarUser");
 const sidebarUserName = document.getElementById("sidebarUserName");
 let appStarted = false;
 
 function showLoginError(msg) {
+  if (!loginError) return;
   loginError.textContent = msg;
   loginError.style.display = "block";
 }
 
-function applySession(name, role) {
+function applySession(name, role, email = "") {
   currentUser = { name: name || "Team", role: role || "team" };
   loginScreen.style.display = "none";
   appShell.style.display = "";
   sidebarUser.style.display = "flex";
   document.getElementById("sidebarAvatar").textContent = personInitials(name);
-  const email = `${name.toLowerCase().replace(/[^a-z]+/g, ".").replace(/^\.+|\.+$/g, "")}@stakercollins.com`;
-  sidebarUserName.innerHTML = `<strong>${escapeHtml(name)}</strong>${escapeHtml(email)}`;
+  const displayEmail = email || `${name.toLowerCase().replace(/[^a-z]+/g, ".").replace(/^\.+|\.+$/g, "")}@stakercollins.com`;
+  sidebarUserName.innerHTML = `<strong>${escapeHtml(name)}</strong>${escapeHtml(displayEmail)}`;
 }
 
-function bootAuthenticatedApp(name, role) {
-  applySession(name, role);
+function bootAuthenticatedApp(name, role, email = "") {
+  applySession(name, role, email);
   if (appStarted) return;
   appStarted = true;
   startApp();
 }
 
-const saved = localStorage.getItem(LOGIN_KEY);
-if (saved) {
+async function loadAuthConfig() {
   try {
-    const { name, role } = JSON.parse(saved);
-    if (name) {
-      bootAuthenticatedApp(name, role);
-    } else {
-      throw new Error("bad session");
-    }
+    const response = await apiFetch("/api/config");
+    if (!response.ok) return {};
+    return await response.json();
   } catch {
-    localStorage.removeItem(LOGIN_KEY);
-    loginScreen.style.display = "flex";
-    appShell.style.display = "none";
+    return {};
   }
-} else {
-  loginScreen.style.display = "flex";
-  appShell.style.display = "none";
 }
 
-loginForm.addEventListener("submit", async (e) => {
-  e.preventDefault();
-  const name = document.getElementById("loginName").value;
-  const phone = document.getElementById("loginPhone").value.trim();
-  const btn = document.getElementById("loginSubmit");
-  if (!name) return showLoginError("Please select your name.");
-  if (!phone) return showLoginError("Please enter your phone number.");
-  btn.disabled = true;
-  btn.textContent = "Signing in...";
-  loginError.style.display = "none";
-  try {
-    const res = await fetch("/api/login", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ name, phone })
-    });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) {
-      return showLoginError(data.error || "Name or password is incorrect.");
-    }
-    localStorage.setItem(LOGIN_KEY, JSON.stringify({ name: data.name, role: data.role }));
-    bootAuthenticatedApp(data.name, data.role);
-  } catch {
-    showLoginError("Could not reach the login service. Try again in a moment.");
-  } finally {
-    btn.disabled = false;
-    btn.textContent = "Sign In";
+function loadScript(src, attrs = {}) {
+  const existing = document.querySelector(`script[src="${CSS.escape(src)}"]`);
+  if (existing) {
+    return existing.dataset.loaded === "true"
+      ? Promise.resolve()
+      : new Promise((resolve, reject) => {
+        existing.addEventListener("load", resolve, { once: true });
+        existing.addEventListener("error", reject, { once: true });
+      });
   }
-});
+  return new Promise((resolve, reject) => {
+    const script = document.createElement("script");
+    script.src = src;
+    script.defer = true;
+    script.crossOrigin = "anonymous";
+    Object.entries(attrs).forEach(([key, value]) => script.setAttribute(key, value));
+    script.addEventListener("load", () => {
+      script.dataset.loaded = "true";
+      resolve();
+    }, { once: true });
+    script.addEventListener("error", () => reject(new Error(`Failed to load ${src}`)), { once: true });
+    document.head.appendChild(script);
+  });
+}
+
+async function loadClerkFromCdn(publishableKey) {
+  if (globalThis.Clerk) return globalThis.Clerk;
+  const keyParts = String(publishableKey || "").split("_");
+  const encodedDomain = keyParts[2];
+  if (!encodedDomain) throw new Error("Clerk publishable key is invalid.");
+  const clerkDomain = atob(encodedDomain).slice(0, -1);
+  await loadScript(`https://${clerkDomain}/npm/@clerk/ui@1/dist/ui.browser.js`);
+  await loadScript(`https://${clerkDomain}/npm/@clerk/clerk-js@6/dist/clerk.browser.js`, {
+    "data-clerk-publishable-key": publishableKey
+  });
+  if (!globalThis.Clerk) throw new Error("Clerk could not load.");
+  return globalThis.Clerk;
+}
+
+function clerkUserSession() {
+  const user = globalThis.Clerk?.user;
+  if (!user) return null;
+  const name = user.fullName || [user.firstName, user.lastName].filter(Boolean).join(" ") || user.username || "Team";
+  const email = user.primaryEmailAddress?.emailAddress || user.emailAddresses?.[0]?.emailAddress || "";
+  return { name, role: "team", email };
+}
+
+async function bootClerkAuth() {
+  appShell.style.display = "none";
+  loginScreen.style.display = "flex";
+  const authConfig = await loadAuthConfig();
+  clerkPublishableKey = authConfig.clerkPublishableKey || "";
+  clerkAuthMode = authConfig.auth || "bypass";
+
+  if (!clerkPublishableKey || clerkAuthMode === "bypass") {
+    bootAuthenticatedApp("Brendan Collins", "owner");
+    return;
+  }
+
+  try {
+    const clerk = await loadClerkFromCdn(clerkPublishableKey);
+    await clerk.load({ ui: { ClerkUI: globalThis.__internal_ClerkUICtor } });
+    const signedIn = clerkUserSession();
+    if (signedIn) {
+      bootAuthenticatedApp(signedIn.name, signedIn.role, signedIn.email);
+      return;
+    }
+    const mount = document.getElementById("clerkSignInMount");
+    if (mount) {
+      clerk.mountSignIn(mount, {
+        afterSignInUrl: window.location.href,
+        afterSignUpUrl: window.location.href
+      });
+    }
+    const onSessionChange = () => {
+      const session = clerkUserSession();
+      if (session) bootAuthenticatedApp(session.name, session.role, session.email);
+    };
+    clerk.addListener?.(onSessionChange);
+    const sessionTimer = setInterval(() => {
+      if (appStarted) {
+        clearInterval(sessionTimer);
+        return;
+      }
+      onSessionChange();
+    }, 500);
+  } catch (error) {
+    showLoginError(error.message || "Could not load sign-in.");
+  }
+}
 
 document.getElementById("logoutBtn").addEventListener("click", () => {
   stopChatPolling();
-  localStorage.removeItem(LOGIN_KEY);
-  location.reload();
+  if (globalThis.Clerk?.signOut) {
+    globalThis.Clerk.signOut({ redirectUrl: window.location.href });
+  } else {
+    location.reload();
+  }
 });
+
+bootClerkAuth();
 // End login gate

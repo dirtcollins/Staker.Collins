@@ -12,9 +12,9 @@ CREATE TABLE IF NOT EXISTS properties (
   city TEXT NOT NULL,
   state TEXT NOT NULL,
   zip TEXT NOT NULL,
-  list_price INTEGER,
-  target_offer_low INTEGER,
-  target_offer_high INTEGER,
+  list_price_cents BIGINT,
+  target_offer_low_cents BIGINT,
+  target_offer_high_cents BIGINT,
   listing_agent TEXT,
   brokerage TEXT,
   phone TEXT,
@@ -35,6 +35,43 @@ CREATE TABLE IF NOT EXISTS properties (
 ALTER TABLE properties ADD COLUMN IF NOT EXISTS quick_summary TEXT NOT NULL DEFAULT '';
 ALTER TABLE properties ADD COLUMN IF NOT EXISTS rentcast_data JSONB;
 ALTER TABLE properties ADD COLUMN IF NOT EXISTS rentcast_fetched_at TIMESTAMPTZ;
+ALTER TABLE properties ADD COLUMN IF NOT EXISTS list_price_cents BIGINT;
+ALTER TABLE properties ADD COLUMN IF NOT EXISTS target_offer_low_cents BIGINT;
+ALTER TABLE properties ADD COLUMN IF NOT EXISTS target_offer_high_cents BIGINT;
+
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'properties' AND column_name = 'list_price'
+  ) THEN
+    UPDATE properties
+    SET list_price_cents = COALESCE(list_price_cents, list_price::bigint * 100)
+    WHERE list_price IS NOT NULL;
+  END IF;
+
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'properties' AND column_name = 'target_offer_low'
+  ) THEN
+    UPDATE properties
+    SET target_offer_low_cents = COALESCE(target_offer_low_cents, target_offer_low::bigint * 100)
+    WHERE target_offer_low IS NOT NULL;
+  END IF;
+
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'properties' AND column_name = 'target_offer_high'
+  ) THEN
+    UPDATE properties
+    SET target_offer_high_cents = COALESCE(target_offer_high_cents, target_offer_high::bigint * 100)
+    WHERE target_offer_high IS NOT NULL;
+  END IF;
+END $$;
+
+ALTER TABLE properties DROP COLUMN IF EXISTS list_price;
+ALTER TABLE properties DROP COLUMN IF EXISTS target_offer_low;
+ALTER TABLE properties DROP COLUMN IF EXISTS target_offer_high;
 
 CREATE TABLE IF NOT EXISTS notes (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -112,6 +149,19 @@ CREATE TABLE IF NOT EXISTS prospect_media (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+CREATE TABLE IF NOT EXISTS vendors (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  company_name TEXT NOT NULL,
+  contact_person TEXT NOT NULL DEFAULT '',
+  phone TEXT NOT NULL DEFAULT '',
+  email TEXT NOT NULL DEFAULT '',
+  address TEXT NOT NULL DEFAULT '',
+  type_of_work TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[],
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  deleted_at TIMESTAMPTZ
+);
+
 CREATE TABLE IF NOT EXISTS underwriting_snapshots (
   property_id TEXT PRIMARY KEY REFERENCES properties(id) ON DELETE CASCADE,
   list_price_cents BIGINT NOT NULL DEFAULT 0,
@@ -179,6 +229,8 @@ CREATE INDEX IF NOT EXISTS idx_chat_messages_channel_created_at ON chat_messages
 CREATE INDEX IF NOT EXISTS idx_chat_messages_property_id ON chat_messages(property_id);
 CREATE INDEX IF NOT EXISTS idx_prospect_media_property_id ON prospect_media(property_id);
 CREATE INDEX IF NOT EXISTS idx_prospect_media_created_at ON prospect_media(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_vendors_company_name ON vendors(lower(company_name));
+CREATE INDEX IF NOT EXISTS idx_vendors_updated_at ON vendors(updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_activity_log_property_id ON activity_log(property_id);
 CREATE INDEX IF NOT EXISTS idx_activity_log_created_at ON activity_log(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_properties_acquisition_status ON properties(acquisition_status);
@@ -188,3 +240,5 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_properties_address_zip ON properties(lower
 
 INSERT INTO schema_migrations (version) VALUES ('20260522_initial') ON CONFLICT DO NOTHING;
 INSERT INTO schema_migrations (version) VALUES ('20260522_indexes_and_unique') ON CONFLICT DO NOTHING;
+INSERT INTO schema_migrations (version) VALUES ('20260523_vendors') ON CONFLICT DO NOTHING;
+INSERT INTO schema_migrations (version) VALUES ('20260524_money_to_cents') ON CONFLICT DO NOTHING;

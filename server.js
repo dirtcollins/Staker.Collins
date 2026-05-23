@@ -33,6 +33,7 @@ if (process.env.NODE_ENV === "production" && useMemory && !explicitMemory) {
 }
 
 const clerkSecretKey = process.env.CLERK_SECRET_KEY || "";
+const clerkPublishableKey = process.env.CLERK_PUBLISHABLE_KEY || "";
 const clerkConfigured = Boolean(clerkSecretKey);
 // In memory mode, the app runs as a local demo and skips auth checks.
 // Production paths (Vercel, NODE_ENV=production) enforce auth via the
@@ -92,6 +93,7 @@ const memory = {
   featureRequests: [],
   chatMessages: [],
   prospectMedia: [],
+  vendors: [],
   underwriting: [],
   activityLog: []
 };
@@ -125,6 +127,15 @@ const stageFor = (property) => {
 };
 
 const normalizeStage = (stage) => pipelineStages.includes(stage) ? stage : "New Lead";
+const dollarsToCents = (value) => Math.round(Number(value || 0) * 100);
+const centsToDollars = (value) => Math.round(Number(value || 0)) / 100;
+const rowMoneyDollars = (row = {}, centsKey, legacyDollarKey) => (
+  row[centsKey] != null
+    ? centsToDollars(row[centsKey])
+    : row[legacyDollarKey] != null
+      ? Number(row[legacyDollarKey])
+      : null
+);
 
 function ownedDefaultsFor(row) {
   const source = row.source || {};
@@ -135,7 +146,10 @@ function ownedDefaultsFor(row) {
     ...owned,
     ownedPhase: owned.ownedPhase || "Purchased / Not Started",
     purchaseCloseDate: purchaseDate,
-    actualPurchasePrice: owned.actualPurchasePrice || row.target_offer_high || row.list_price || null,
+    actualPurchasePrice: owned.actualPurchasePrice
+      || rowMoneyDollars(row, "target_offer_high_cents", "target_offer_high")
+      || rowMoneyDollars(row, "list_price_cents", "list_price")
+      || null,
     forecastArv: owned.forecastArv || source.arv || null,
     monthlyHoldingCost: owned.monthlyHoldingCost || 3000,
     nextAction: owned.nextAction || null
@@ -154,15 +168,12 @@ function timelineDefaultsFor(row, owned) {
 }
 
 function fallbackAssumptions(property) {
-  const listPrice = property.listPrice ?? property.list_price ?? 0;
+  const listPrice = property.listPrice ?? rowMoneyDollars(property, "list_price_cents", "list_price") ?? 0;
   return {
     arv: property.arv || Math.round(listPrice * (priorityAddresses.has(property.address) ? 1.22 : 1.16) / 1000) * 1000,
     rehab: property.rehab || (priorityAddresses.has(property.address) ? 55000 : 35000)
   };
 }
-
-const dollarsToCents = (value) => Math.round(Number(value || 0) * 100);
-const centsToDollars = (value) => Math.round(Number(value || 0)) / 100;
 
 function calculateUnderwriting(input) {
   const listPrice = Number(input.listPrice || 0);
@@ -310,9 +321,9 @@ async function loadMemorySeed() {
       city: property.city,
       state: property.state,
       zip: property.zip,
-      list_price: property.listPrice,
-      target_offer_low: property.targetOfferLow,
-      target_offer_high: property.targetOfferHigh,
+      list_price_cents: dollarsToCents(property.listPrice),
+      target_offer_low_cents: dollarsToCents(property.targetOfferLow),
+      target_offer_high_cents: dollarsToCents(property.targetOfferHigh),
       listing_agent: property.listingAgent,
       brokerage: property.brokerage,
       phone: property.phone,
@@ -468,9 +479,9 @@ function toClientProperty(row) {
     city: row.city,
     state: row.state,
     zip: row.zip,
-    listPrice: row.list_price,
-    targetOfferLow: row.target_offer_low,
-    targetOfferHigh: row.target_offer_high,
+    listPrice: rowMoneyDollars(row, "list_price_cents", "list_price"),
+    targetOfferLow: rowMoneyDollars(row, "target_offer_low_cents", "target_offer_low"),
+    targetOfferHigh: rowMoneyDollars(row, "target_offer_high_cents", "target_offer_high"),
     listingAgent: row.listing_agent,
     brokerage: row.brokerage,
     phone: row.phone,
@@ -712,7 +723,7 @@ function extractSessionToken(req) {
   return cookies["__session"] || cookies["__clerk_db_jwt"] || null;
 }
 
-const PUBLIC_PATHS = new Set(["/api/health", "/api/login"]);
+const PUBLIC_PATHS = new Set(["/api/health", "/api/config", "/api/login"]);
 const AUTH_REQUIRED_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 
 async function authenticate(req, pathname) {
@@ -839,12 +850,13 @@ async function persistScore(property, rentcastData = property.rentcast_data || p
     });
     return toClientProperty(record);
   }
-  await dbQuery(`
+  await withTransaction(async (tx) => {
+    await tx(`
     UPDATE properties
     SET rentcast_data = $2, rentcast_fetched_at = $3, updated_at = now()
     WHERE id = $1
   `, [property.id, rentcastData, rentcastData?.fetchedAt || null]);
-  await dbQuery(`
+    await tx(`
     INSERT INTO deal_scores (
       property_id, score, profit_margin_score, rehab_risk_score, arv_confidence_score,
       market_momentum_score, seller_motivation_score, score_breakdown
@@ -869,6 +881,7 @@ async function persistScore(property, rentcastData = property.rentcast_data || p
     scoring.seller_motivation_score,
     JSON.stringify(scoring.score_breakdown)
   ]);
+  });
   const rows = await dbQuery(`
     SELECT p.*, ds.score AS deal_score, ds.profit_margin_score, ds.rehab_risk_score,
       ds.arv_confidence_score, ds.market_momentum_score, ds.seller_motivation_score, ds.score_breakdown,
@@ -979,9 +992,9 @@ async function createProperty(body) {
     city: body.city,
     state: body.state,
     zip: body.zip,
-    list_price: body.listPrice ?? null,
-    target_offer_low: null,
-    target_offer_high: null,
+    list_price_cents: body.listPrice == null ? null : dollarsToCents(body.listPrice),
+    target_offer_low_cents: null,
+    target_offer_high_cents: null,
     listing_agent: body.listingAgent ?? null,
     brokerage: body.brokerage ?? null,
     phone: body.phone ?? null,
@@ -1002,7 +1015,7 @@ async function createProperty(body) {
   }
   await dbQuery(`
     INSERT INTO properties
-      (id, address, city, state, zip, list_price, listing_agent, brokerage, phone, why, priority, acquisition_status, source)
+      (id, address, city, state, zip, list_price_cents, listing_agent, brokerage, phone, why, priority, acquisition_status, source)
     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
   `, [
     id,
@@ -1010,7 +1023,7 @@ async function createProperty(body) {
     body.city,
     body.state,
     body.zip,
-    body.listPrice ?? null,
+    body.listPrice == null ? null : dollarsToCents(body.listPrice),
     body.listingAgent ?? null,
     body.brokerage ?? null,
     body.phone ?? null,
@@ -1031,7 +1044,7 @@ async function updateProperty(id, body) {
     if (body.city !== undefined) property.city = body.city;
     if (body.state !== undefined) property.state = body.state;
     if (body.zip !== undefined) property.zip = body.zip;
-    if (body.listPrice !== undefined) property.list_price = body.listPrice;
+    if (body.listPrice !== undefined) property.list_price_cents = dollarsToCents(body.listPrice);
     if (body.listingAgent !== undefined) property.listing_agent = body.listingAgent;
     if (body.brokerage !== undefined) property.brokerage = body.brokerage;
     if (body.phone !== undefined) property.phone = body.phone;
@@ -1050,7 +1063,7 @@ async function updateProperty(id, body) {
       city = COALESCE($3, city),
       state = COALESCE($4, state),
       zip = COALESCE($5, zip),
-      list_price = $6,
+      list_price_cents = $6,
       listing_agent = $7,
       brokerage = $8,
       phone = $9,
@@ -1064,7 +1077,7 @@ async function updateProperty(id, body) {
     body.city || null,
     body.state || null,
     body.zip || null,
-    body.listPrice ?? null,
+    body.listPrice == null ? null : dollarsToCents(body.listPrice),
     body.listingAgent ?? null,
     body.brokerage ?? null,
     body.phone ?? null,
@@ -1106,6 +1119,23 @@ async function updatePropertyStatus(id, status, quickSummary) {
   return rows[0] ? toClientProperty(rows[0]) : null;
 }
 
+async function insertActivity(query, propertyIdValue, action, metadata = {}, actor = "Team") {
+  const entry = {
+    id: randomUUID(),
+    property_id: propertyIdValue,
+    action,
+    actor,
+    metadata,
+    created_at: new Date().toISOString()
+  };
+  const rows = await query(`
+    INSERT INTO activity_log (id, property_id, action, actor, metadata)
+    VALUES ($1, $2, $3, $4, $5)
+    RETURNING *
+  `, [entry.id, propertyIdValue, action, actor, JSON.stringify(metadata)]);
+  return rows[0];
+}
+
 async function writeActivity(propertyIdValue, action, metadata = {}, actor = "Team") {
   const entry = {
     id: randomUUID(),
@@ -1119,12 +1149,7 @@ async function writeActivity(propertyIdValue, action, metadata = {}, actor = "Te
     memory.activityLog.unshift(entry);
     return entry;
   }
-  const rows = await dbQuery(`
-    INSERT INTO activity_log (id, property_id, action, actor, metadata)
-    VALUES ($1, $2, $3, $4, $5)
-    RETURNING *
-  `, [entry.id, propertyIdValue, action, actor, JSON.stringify(metadata)]);
-  return rows[0];
+  return insertActivity(dbQuery, propertyIdValue, action, metadata, actor);
 }
 
 async function saveUnderwriting(propertyIdValue, body) {
@@ -1138,8 +1163,8 @@ async function saveUnderwriting(propertyIdValue, body) {
     if (index >= 0) memory.underwriting[index] = snapshot;
     else memory.underwriting.push(snapshot);
     Object.assign(property, {
-      target_offer_high: Math.round(snapshot.calculation.recommendedMaxOffer),
-      target_offer_low: Math.round(snapshot.calculation.recommendedMaxOffer * 0.95)
+      target_offer_high_cents: dollarsToCents(snapshot.calculation.recommendedMaxOffer),
+      target_offer_low_cents: dollarsToCents(snapshot.calculation.recommendedMaxOffer * 0.95)
     });
   } else {
     await withTransaction(async (tx) => {
@@ -1183,14 +1208,14 @@ async function saveUnderwriting(propertyIdValue, body) {
       ]);
       await tx(`
         UPDATE properties
-        SET target_offer_high = $2,
-            target_offer_low = $3,
+        SET target_offer_high_cents = $2,
+            target_offer_low_cents = $3,
             updated_at = now()
         WHERE id = $1
       `, [
         propertyIdValue,
-        Math.round(snapshot.calculation.recommendedMaxOffer),
-        Math.round(snapshot.calculation.recommendedMaxOffer * 0.95)
+        dollarsToCents(snapshot.calculation.recommendedMaxOffer),
+        dollarsToCents(snapshot.calculation.recommendedMaxOffer * 0.95)
       ]);
     });
   }
@@ -1258,6 +1283,135 @@ async function deleteNote(id) {
 async function listFeatureRequests() {
   if (useMemory) return memory.featureRequests.sort((a, b) => b.created_at.localeCompare(a.created_at));
   return dbQuery("SELECT id, requester, priority, body, status, created_at FROM feature_requests ORDER BY created_at DESC");
+}
+
+const vendorToClient = (row = {}) => ({
+  id: row.id,
+  companyName: row.company_name || row.companyName || "",
+  contactPerson: row.contact_person || row.contactPerson || "",
+  phone: row.phone || "",
+  email: row.email || "",
+  address: row.address || "",
+  typeOfWork: normalizeVendorWorkTypes({ typeOfWork: row.typeOfWork, type_of_work: row.type_of_work }),
+  createdAt: row.created_at || row.createdAt || null,
+  updatedAt: row.updated_at || row.updatedAt || null
+});
+
+function normalizeVendorWorkTypes(body = {}) {
+  const raw = body.typeOfWork ?? body.type_of_work;
+  let values = [];
+  if (Array.isArray(raw)) {
+    values = raw;
+  } else if (raw) {
+    values = [raw];
+  }
+  return [...new Set(values.map((value) => String(value || "").trim()).filter(Boolean))];
+}
+
+const normalizeVendorBody = (body = {}) => ({
+  companyName: String(body.companyName || body.company_name || "").trim(),
+  contactPerson: String(body.contactPerson || body.contact_person || "").trim(),
+  phone: String(body.phone || "").trim(),
+  email: String(body.email || "").trim(),
+  address: String(body.address || "").trim(),
+  typeOfWork: normalizeVendorWorkTypes(body)
+});
+
+async function listVendors() {
+  if (useMemory) return memory.vendors.filter((vendor) => !vendor.deleted_at).map(vendorToClient);
+  const rows = await dbQuery(`
+    SELECT id, company_name, contact_person, phone, email, address, type_of_work, created_at, updated_at
+    FROM vendors
+    WHERE deleted_at IS NULL
+    ORDER BY lower(company_name)
+  `);
+  return rows.map(vendorToClient);
+}
+
+async function createVendor(body) {
+  const vendor = normalizeVendorBody(body);
+  if (!vendor.companyName) {
+    const error = new Error("Company name is required.");
+    error.status = 400;
+    throw error;
+  }
+  if (useMemory) {
+    const saved = {
+      id: randomUUID(),
+      companyName: vendor.companyName,
+      contactPerson: vendor.contactPerson,
+      phone: vendor.phone,
+      email: vendor.email,
+      address: vendor.address,
+      typeOfWork: vendor.typeOfWork,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+    memory.vendors.unshift(saved);
+    await writeActivity(null, "vendor.created", { companyName: saved.companyName }, "Team");
+    return vendorToClient(saved);
+  }
+  const rows = await dbQuery(`
+    INSERT INTO vendors (company_name, contact_person, phone, email, address, type_of_work)
+    VALUES ($1, $2, $3, $4, $5, $6)
+    RETURNING id, company_name, contact_person, phone, email, address, type_of_work, created_at, updated_at
+  `, [vendor.companyName, vendor.contactPerson, vendor.phone, vendor.email, vendor.address, vendor.typeOfWork]);
+  const saved = vendorToClient(rows[0]);
+  await writeActivity(null, "vendor.created", { companyName: saved.companyName }, "Team");
+  return saved;
+}
+
+async function updateVendor(id, body) {
+  const vendor = normalizeVendorBody(body);
+  if (!vendor.companyName) {
+    const error = new Error("Company name is required.");
+    error.status = 400;
+    throw error;
+  }
+  if (useMemory) {
+    const index = memory.vendors.findIndex((item) => item.id === id && !item.deleted_at);
+    if (index < 0) return null;
+    memory.vendors[index] = {
+      ...memory.vendors[index],
+      companyName: vendor.companyName,
+      contactPerson: vendor.contactPerson,
+      phone: vendor.phone,
+      email: vendor.email,
+      address: vendor.address,
+      typeOfWork: vendor.typeOfWork,
+      updatedAt: new Date().toISOString()
+    };
+    await writeActivity(null, "vendor.updated", { companyName: memory.vendors[index].companyName }, "Team");
+    return vendorToClient(memory.vendors[index]);
+  }
+  const rows = await dbQuery(`
+    UPDATE vendors
+    SET company_name = $2,
+        contact_person = $3,
+        phone = $4,
+        email = $5,
+        address = $6,
+        type_of_work = $7,
+        updated_at = now()
+    WHERE id = $1 AND deleted_at IS NULL
+    RETURNING id, company_name, contact_person, phone, email, address, type_of_work, created_at, updated_at
+  `, [id, vendor.companyName, vendor.contactPerson, vendor.phone, vendor.email, vendor.address, vendor.typeOfWork]);
+  if (!rows[0]) return null;
+  const saved = vendorToClient(rows[0]);
+  await writeActivity(null, "vendor.updated", { companyName: saved.companyName }, "Team");
+  return saved;
+}
+
+async function deleteVendor(id) {
+  if (useMemory) {
+    const vendor = memory.vendors.find((item) => item.id === id);
+    if (vendor) vendor.deleted_at = new Date().toISOString();
+    if (vendor) await writeActivity(null, "vendor.deleted", { companyName: vendor.companyName || vendor.company_name || "" }, "Team");
+    return Boolean(vendor);
+  }
+  const rows = await dbQuery("UPDATE vendors SET deleted_at = now(), updated_at = now() WHERE id = $1 AND deleted_at IS NULL RETURNING id, company_name", [id]);
+  if (rows[0]) await writeActivity(null, "vendor.deleted", { companyName: rows[0].company_name || "" }, "Team");
+  return Boolean(rows[0]);
 }
 
 async function createFeatureRequest(body) {
@@ -1444,6 +1598,10 @@ async function api(req, res, pathname) {
     auth: authBypass ? "bypass" : "clerk",
     mediaUploads: uploadThing ? "uploadthing" : isVercel ? "unconfigured" : "local"
   });
+  if (pathname === "/api/config" && req.method === "GET") return send(res, 200, {
+    clerkPublishableKey,
+    auth: authBypass ? "bypass" : "clerk"
+  });
   if (pathname === "/api/uploads/media" && req.method === "POST") {
     try {
       return send(res, 201, { upload: await saveUploadedMedia(req) });
@@ -1455,6 +1613,7 @@ async function api(req, res, pathname) {
     return send(res, 200, {
       database: useMemory ? "memory" : "postgres",
       persistent: !useMemory,
+      clerkPublishableKey,
       mediaUploadsAvailable: Boolean(uploadThing) || !isVercel,
       mediaUploadProvider: uploadThing ? "uploadthing" : isVercel ? "unconfigured" : "local",
       properties: await listProperties(),
@@ -1465,10 +1624,32 @@ async function api(req, res, pathname) {
       featureRequests: await listFeatureRequests(),
       chatMessages: await listChatMessages("all"),
       prospectMedia: await listProspectMedia(),
+      vendors: await listVendors(),
       activityLog: useMemory
         ? memory.activityLog.slice(0, 30)
         : await dbQuery("SELECT * FROM activity_log ORDER BY created_at DESC LIMIT 30")
     });
+  }
+  if (pathname === "/api/vendors" && req.method === "GET") return send(res, 200, { vendors: await listVendors() });
+  if (pathname === "/api/vendors" && req.method === "POST") {
+    try {
+      return send(res, 201, { vendor: await createVendor(await readBody(req)) });
+    } catch (error) {
+      return send(res, error.status || 500, { error: error.message || "Could not create vendor." });
+    }
+  }
+  const vendorMatch = pathname.match(/^\/api\/vendors\/([^/]+)$/);
+  if (vendorMatch && req.method === "PUT") {
+    try {
+      const vendor = await updateVendor(vendorMatch[1], await readBody(req));
+      return vendor ? send(res, 200, { vendor }) : notFound(res);
+    } catch (error) {
+      return send(res, error.status || 500, { error: error.message || "Could not update vendor." });
+    }
+  }
+  if (vendorMatch && req.method === "DELETE") {
+    const deleted = await deleteVendor(vendorMatch[1]);
+    return deleted ? send(res, 204, {}) : notFound(res);
   }
   if (pathname === "/api/properties" && req.method === "POST") {
     try {
@@ -1542,13 +1723,21 @@ async function api(req, res, pathname) {
   if (propertyDeleteMatch && req.method === "DELETE") {
     const id = propertyDeleteMatch[1];
     if (useMemory) {
+      const property = memory.properties.find((p) => p.id === id);
       memory.properties = memory.properties.filter((p) => p.id !== id);
       memory.tasks = memory.tasks.filter((t) => t.property_id !== id);
       memory.documents = memory.documents.filter((d) => d.property_id !== id);
       memory.scope = memory.scope.filter((s) => s.property_id !== id);
+      await writeActivity(id, "property.deleted", { address: property?.address || "" }, "Team");
       return send(res, 204, {});
     }
-    await dbQuery("DELETE FROM properties WHERE id = $1", [id]);
+    await withTransaction(async (tx) => {
+      const rows = await tx("SELECT address FROM properties WHERE id = $1", [id]);
+      if (rows[0]) {
+        await insertActivity(tx, id, "property.deleted", { address: rows[0].address || "" }, "Team");
+        await tx("DELETE FROM properties WHERE id = $1", [id]);
+      }
+    });
     return send(res, 204, {});
   }
 
