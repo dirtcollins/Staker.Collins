@@ -5,6 +5,7 @@ import { createReadStream, existsSync } from "node:fs";
 import { dirname, extname, join, normalize } from "node:path";
 import { randomUUID } from "node:crypto";
 import pg from "pg";
+import { UTApi, UTFile } from "uploadthing/server";
 import { calculateDealScore } from "./lib/deal-scoring.js";
 
 const { Pool } = pg;
@@ -16,6 +17,8 @@ const runtimeChatPath = join(root, "data/runtime-chat-messages.json");
 const runtimeProspectMediaPath = join(root, "data/runtime-prospect-media.json");
 const mediaUploadDir = join(root, "uploads/media");
 const isVercel = process.env.VERCEL === "1";
+const uploadThingToken = process.env.UPLOADTHING_TOKEN || "";
+const uploadThing = uploadThingToken ? new UTApi({ token: uploadThingToken }) : null;
 
 const TEAM = [
   { name: "Ashton Staker", phone: "9314502979", role: "owner" },
@@ -526,13 +529,49 @@ async function saveUploadedMedia(req) {
   };
   const ext = extensionFromMime[file.mimeType] || extname(file.filename).toLowerCase() || ".bin";
   const safeName = `${randomUUID()}${ext}`;
+  if (uploadThing) {
+    const uploaded = await uploadThing.uploadFiles(
+      new UTFile([file.buffer], safeName, {
+        type: file.mimeType,
+        customId: safeName
+      }),
+      {
+        metadata: {
+          originalName: file.filename,
+          uploadedBy: "staker-collins"
+        },
+        contentDisposition: "inline"
+      }
+    );
+    if (uploaded.error || !uploaded.data) {
+      const error = new Error(uploaded.error?.message || "UploadThing upload failed.");
+      error.status = 502;
+      throw error;
+    }
+    return {
+      url: uploaded.data.ufsUrl || uploaded.data.url,
+      appUrl: uploaded.data.appUrl || null,
+      fileKey: uploaded.data.key,
+      filename: uploaded.data.name || safeName,
+      originalName: file.filename,
+      mimeType: file.mimeType,
+      size: uploaded.data.size || file.buffer.length,
+      provider: "uploadthing"
+    };
+  }
   if (isVercel) {
+    const error = new Error("UPLOADTHING_TOKEN is required for file uploads on Vercel.");
+    error.status = 503;
+    throw error;
+  }
+  if (process.env.UPLOADTHING_LOCAL_FALLBACK === "data-url") {
     return {
       url: `data:${file.mimeType};base64,${file.buffer.toString("base64")}`,
       filename: safeName,
       originalName: file.filename,
       mimeType: file.mimeType,
-      size: file.buffer.length
+      size: file.buffer.length,
+      provider: "data-url"
     };
   }
   await mkdir(mediaUploadDir, { recursive: true });
@@ -1214,7 +1253,11 @@ async function api(req, res, pathname) {
     return send(res, 200, { ok: true, name: match.name, role: match.role });
   }
 
-  if (pathname === "/api/health") return send(res, 200, { ok: true, database: useMemory ? "memory" : "postgres" });
+  if (pathname === "/api/health") return send(res, 200, {
+    ok: true,
+    database: useMemory ? "memory" : "postgres",
+    mediaUploads: uploadThing ? "uploadthing" : isVercel ? "unconfigured" : "local"
+  });
   if (pathname === "/api/uploads/media" && req.method === "POST") {
     try {
       return send(res, 201, { upload: await saveUploadedMedia(req) });
@@ -1226,6 +1269,8 @@ async function api(req, res, pathname) {
     return send(res, 200, {
       database: useMemory ? "memory" : "postgres",
       persistent: !useMemory,
+      mediaUploadsAvailable: Boolean(uploadThing) || !isVercel,
+      mediaUploadProvider: uploadThing ? "uploadthing" : isVercel ? "unconfigured" : "local",
       properties: await listProperties(),
       notes: useMemory ? memory.notes.filter((note) => !note.deleted_at) : await dbQuery("SELECT id, property_id, author, type, body, created_at FROM notes WHERE deleted_at IS NULL ORDER BY created_at DESC"),
       tasks: useMemory ? memory.tasks : await dbQuery("SELECT * FROM tasks ORDER BY due_date NULLS LAST, created_at DESC"),
