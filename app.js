@@ -329,13 +329,32 @@ const saveRecordState = async (id, updates) => {
   }
 };
 
-const escapeHtml = (value) => String(value || "").replace(/[&<>"']/g, (char) => ({
+const escapeHtml = (value) => String(value ?? "").replace(/[&<>"']/g, (char) => ({
   "&": "&amp;",
   "<": "&lt;",
   ">": "&gt;",
   "\"": "&quot;",
   "'": "&#39;"
 }[char]));
+
+const SAFE_URL_PROTOCOLS = new Set(["http:", "https:", "data:", "mailto:", "tel:"]);
+const sanitizeUrl = (value) => {
+  if (!value) return "";
+  const text = String(value).trim();
+  if (!text) return "";
+  if (text.startsWith("/") || text.startsWith("#") || text.startsWith("./") || text.startsWith("../")) {
+    return text;
+  }
+  try {
+    const url = new URL(text, window.location.origin);
+    if (!SAFE_URL_PROTOCOLS.has(url.protocol)) return "";
+    if (url.protocol === "data:" && !/^data:image\//i.test(text)) return "";
+    return text;
+  } catch {
+    return "";
+  }
+};
+const safeUrl = (value) => escapeHtml(sanitizeUrl(value));
 
 const formatNoteTime = (iso) => {
   if (!iso) return "";
@@ -381,7 +400,10 @@ const escapeSvg = (value) => String(value || "").replace(/[&<>"']/g, (char) => (
 }[char]));
 
 const propertyPhoto = (property) => {
-  if (property.mainPhoto) return property.mainPhoto;
+  if (property.mainPhoto) {
+    const cleaned = sanitizeUrl(property.mainPhoto);
+    if (cleaned) return cleaned;
+  }
   if (property.address === "1301 Sycamore Dr") return "assets/1301-sycamore-main.jpg";
   return generatedHouseImage(property);
 };
@@ -1201,17 +1223,20 @@ function renderActivityFeed() {
   el.innerHTML = activeActivity.slice(0, 30).map((entry) => {
     const property = properties.find((p) => p.id === entry.property_id);
     const addr = property?.address || "a property";
-    const metadata = typeof entry.metadata === "string"
-      ? JSON.parse(entry.metadata)
-      : (entry.metadata || {});
+    let metadata = {};
+    if (typeof entry.metadata === "string") {
+      try { metadata = JSON.parse(entry.metadata) || {}; } catch { metadata = {}; }
+    } else if (entry.metadata && typeof entry.metadata === "object") {
+      metadata = entry.metadata;
+    }
     const labelFn = ACTION_LABELS[entry.action];
     const label = labelFn ? labelFn(metadata, addr) : `${entry.action} on ${addr}`;
     return `
       <div class="activity-row">
-        <div class="activity-text">${label}</div>
+        <div class="activity-text">${escapeHtml(label)}</div>
         <div class="activity-meta">
-          <span>${entry.actor || "Team"}</span>
-          <span>${formatNoteTime(entry.created_at)}</span>
+          <span>${escapeHtml(entry.actor || "Team")}</span>
+          <span>${escapeHtml(formatNoteTime(entry.created_at))}</span>
         </div>
       </div>
     `;
@@ -1498,15 +1523,15 @@ function renderDecisionList() {
       ? `${propertyTasks.length} task${propertyTasks.length > 1 ? "s" : ""} due`
       : ownedAction ? ownedAction.label : "High priority";
     return `
-      <button class="stack-card property-card-link" type="button" data-property-id="${property.id}">
-        <strong>${property.address}</strong>
-        <p>${ownedAction ? `${ownedPhaseFor(property)} · ${ownedAction.label}` : property.why}</p>
+      <button class="stack-card property-card-link" type="button" data-property-id="${escapeHtml(property.id)}">
+        <strong>${escapeHtml(property.address)}</strong>
+        <p>${ownedAction ? `${escapeHtml(ownedPhaseFor(property))} · ${escapeHtml(ownedAction.label)}` : escapeHtml(property.why)}</p>
         <div class="meta">
           ${scoreBadge(property)}
           <span class="pill">${money(property.listPrice)}</span>
-          <span class="pill amber">${property.beds || "?"} bd / ${property.baths || "?"} ba</span>
-          <span class="pill amber">${taskLabel}</span>
-          <span class="pill blue">Call ${property.phone || "agent"}</span>
+          <span class="pill amber">${escapeHtml(property.beds || "?")} bd / ${escapeHtml(property.baths || "?")} ba</span>
+          <span class="pill amber">${escapeHtml(taskLabel)}</span>
+          <span class="pill blue">Call ${escapeHtml(property.phone || "agent")}</span>
         </div>
       </button>
     `;
@@ -1519,15 +1544,15 @@ function renderDashboardPhotos() {
   const photoGrid = document.getElementById("dashboardPhotoGrid");
   if (!photoGrid) return;
   photoGrid.innerHTML = byScore(activeProperties()).slice(0, 6).map((property) => `
-    <button class="photo-tile" type="button" data-property-id="${property.id}">
+    <button class="photo-tile" type="button" data-property-id="${escapeHtml(property.id)}">
       <div class="photo-media">
-        <img src="${propertyPhoto(property)}" alt="Main house image for ${property.address}">
+        <img src="${safeUrl(propertyPhoto(property))}" alt="Main house image for ${escapeHtml(property.address)}">
         <div class="price-badge">
           <span>Current list</span>
           <strong>${money(property.listPrice)}</strong>
         </div>
       </div>
-      <span>${property.address}</span>
+      <span>${escapeHtml(property.address)}</span>
     </button>
   `).join("");
 
@@ -1546,7 +1571,7 @@ function renderStageBars() {
   const max = Math.max(...counts.map(([, count]) => count), 1);
   stageBars.innerHTML = counts.map(([stage, count]) => `
     <div class="stage-bar-row">
-      <div class="stage-bar-label"><span>${stage}</span><strong>${count}</strong></div>
+      <div class="stage-bar-label"><span>${escapeHtml(stage)}</span><strong>${Number(count)}</strong></div>
       <div class="stage-track"><div style="width:${Math.max(8, count / max * 100)}%"></div></div>
     </div>
   `).join("");
@@ -1558,13 +1583,13 @@ function renderDashboardTable() {
   table.innerHTML = byScore(activeProperties().filter(isAvailableListing)).slice(0, 12).map((property) => `
     <tr>
       <td>${scoreBadge(property, true)}</td>
-      <td><a href="${propertyDetailHash(property.id)}" data-property-id="${property.id}">${property.address}</a><br><span>${property.city}, ${property.state}</span></td>
-      <td>${property.stage}</td>
+      <td><a href="${safeUrl(propertyDetailHash(property.id))}" data-property-id="${escapeHtml(property.id)}">${escapeHtml(property.address)}</a><br><span>${escapeHtml(property.city)}, ${escapeHtml(property.state)}</span></td>
+      <td>${escapeHtml(property.stage)}</td>
       <td>${listingStatusPill(property)}</td>
       <td>${money(property.listPrice)}</td>
       <td>${money(property.targetOfferLow)} - ${money(property.targetOfferHigh)}</td>
-      <td>${property.listingAgent || "Verify"}<br><span>${property.phone || ""}</span></td>
-      <td>${daysOnMarketValue(property) ? `${daysOnMarketValue(property)} DOM · ` : ""}${auctionInfo(property) ? "Verify auction date" : property.status === "verify" ? "Verify listing, then call agent" : "Follow up"}</td>
+      <td>${escapeHtml(property.listingAgent || "Verify")}<br><span>${escapeHtml(property.phone || "")}</span></td>
+      <td>${daysOnMarketValue(property) ? `${Number(daysOnMarketValue(property))} DOM · ` : ""}${auctionInfo(property) ? "Verify auction date" : property.status === "verify" ? "Verify listing, then call agent" : "Follow up"}</td>
     </tr>
   `).join("");
   bindPropertyLinks(table);
@@ -2128,14 +2153,14 @@ function renderProperties() {
     selectedId = filtered[0].id;
   }
   list.innerHTML = filtered.map((property) => `
-    <button class="property-button ${property.id === selectedId ? "active" : ""}" data-property-id="${property.id}">
-      <img src="${propertyPhoto(property)}" alt="Main house image for ${property.address}">
+    <button class="property-button ${property.id === selectedId ? "active" : ""}" data-property-id="${escapeHtml(property.id)}">
+      <img src="${safeUrl(propertyPhoto(property))}" alt="Main house image for ${escapeHtml(property.address)}">
       <span>
         <span class="property-title-row">
-          <strong>${property.address}</strong>
+          <strong>${escapeHtml(property.address)}</strong>
           ${listingStatusKind(property) === "unknown" ? "" : listingStatusPill(property)}
         </span>
-        <em>${readRecordState(property.id).status} · ${money(property.listPrice)} · ${property.beds || "?"} bd / ${property.baths || "?"} ba · ${property.score || 0} ${property.scoreBand?.label || ""}</em>
+        <em>${escapeHtml(readRecordState(property.id).status)} · ${money(property.listPrice)} · ${escapeHtml(property.beds || "?")} bd / ${escapeHtml(property.baths || "?")} ba · ${Number(property.score || 0)} ${escapeHtml(property.scoreBand?.label || "")}</em>
       </span>
     </button>
   `).join("") || "<p class=\"empty\">No matching properties</p>";
@@ -2567,7 +2592,7 @@ function renderRecord(containerId = "recordPanel", mode = "embedded") {
       </div>
       <div class="note-composer">
         <select id="noteAuthor-${suffix}" aria-label="Note author">
-          ${teamMembers.map((member) => `<option>${member.name}</option>`).join("")}
+          ${teamMembers.map((member) => `<option>${escapeHtml(member.name)}</option>`).join("")}
         </select>
         <select id="noteType-${suffix}" aria-label="Note type">
           <option>General</option>
@@ -3223,7 +3248,7 @@ function field(label, value) {
 }
 
 function renderCalculatorOptions() {
-  const options = activeProperties().map((property) => `<option value="${property.id}">${property.address}</option>`).join("");
+  const options = activeProperties().map((property) => `<option value="${escapeHtml(property.id)}">${escapeHtml(property.address)}</option>`).join("");
   ["calcProperty", "scopeProperty", "taskProperty", "docProperty"].forEach((id) => {
     const select = document.getElementById(id);
     if (select) select.innerHTML = options;
@@ -3231,7 +3256,7 @@ function renderCalculatorOptions() {
   const scopeSelect = document.getElementById("scopeProperty");
   if (scopeSelect && activePropertyById(selectedId)) scopeSelect.value = selectedId;
   const taskOwner = document.getElementById("taskOwner");
-  if (taskOwner) taskOwner.innerHTML = teamMembers.map((member) => `<option>${member.name}</option>`).join("");
+  if (taskOwner) taskOwner.innerHTML = teamMembers.map((member) => `<option>${escapeHtml(member.name)}</option>`).join("");
 }
 
 function syncCalculator() {
@@ -4215,7 +4240,7 @@ const isVideoMedia = (item = {}) =>
   String(item.type || "").toLowerCase() === "video" || /\.(mp4|mov|webm)(\?|$)/i.test(String(item.url || ""));
 
 function mediaPreview(item = {}, property = {}) {
-  const url = escapeHtml(item.url || "");
+  const url = safeUrl(item.url || "");
   if (!url) return "";
   if (isVideoMedia(item)) return `<video src="${url}" muted playsinline preload="metadata"></video>`;
   return `<img src="${url}" alt="${escapeHtml(item.caption || property.address || "Project media")}">`;
@@ -7365,7 +7390,7 @@ function startApp() {
       updateChatPolling();
     })
     .catch((error) => {
-      document.body.innerHTML = `<main class="view active"><section class="panel"><h1>Property data could not load</h1><p>${error.message}</p></section></main>`;
+      document.body.innerHTML = `<main class="view active"><section class="panel"><h1>Property data could not load</h1><p>${escapeHtml(error?.message || "Unknown error")}</p></section></main>`;
     });
 }
 
@@ -7378,18 +7403,6 @@ const loginError = document.getElementById("loginError");
 const sidebarUser = document.getElementById("sidebarUser");
 const sidebarUserName = document.getElementById("sidebarUserName");
 let appStarted = false;
-const staticLoginTeam = [
-  { name: "Ashton Staker", phone: "9314502979", role: "owner" },
-  { name: "Brent Staker", phone: "6618055729", role: "owner" },
-  { name: "Nathan Staker", phone: "5625528311", role: "acquisition" },
-  { name: "Nicole Staker", phone: "5628332046", role: "acquisition" },
-  { name: "Brendan Collins", phone: "6614442857", role: "owner" }
-];
-const phoneDigits = (value) => String(value || "").replace(/\D/g, "");
-
-function validateStaticLogin(name, phone) {
-  return staticLoginTeam.find((user) => user.name === name && phoneDigits(user.phone) === phoneDigits(phone));
-}
 
 function showLoginError(msg) {
   loginError.textContent = msg;
@@ -7448,16 +7461,14 @@ loginForm.addEventListener("submit", async (e) => {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ name, phone })
     });
-    if (res.status === 404) throw new Error("login api unavailable");
-    const data = await res.json();
-    if (!res.ok) return showLoginError(data.error || "Incorrect password.");
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      return showLoginError(data.error || "Name or password is incorrect.");
+    }
     localStorage.setItem(LOGIN_KEY, JSON.stringify({ name: data.name, role: data.role }));
     bootAuthenticatedApp(data.name, data.role);
   } catch {
-    const staticMatch = validateStaticLogin(name, phone);
-    if (!staticMatch) return showLoginError("Name or password is incorrect.");
-    localStorage.setItem(LOGIN_KEY, JSON.stringify({ name: staticMatch.name, role: staticMatch.role }));
-    bootAuthenticatedApp(staticMatch.name, staticMatch.role);
+    showLoginError("Could not reach the login service. Try again in a moment.");
   } finally {
     btn.disabled = false;
     btn.textContent = "Sign In";
