@@ -5,6 +5,7 @@ import { createReadStream, existsSync } from "node:fs";
 import { dirname, extname, isAbsolute, join, normalize, relative as relativePath } from "node:path";
 import { randomUUID } from "node:crypto";
 import pg from "pg";
+import Busboy from "busboy";
 import { calculateDealScore } from "./lib/deal-scoring.js";
 
 const { Pool } = pg;
@@ -511,43 +512,77 @@ async function readBody(req) {
   }
 }
 
-async function readRawBody(req, maxBytes = 60 * 1024 * 1024) {
-  const chunks = [];
-  let total = 0;
-  for await (const chunk of req) {
-    total += chunk.length;
-    if (total > maxBytes) {
-      const error = new Error("Upload is too large.");
-      error.status = 413;
-      throw error;
-    }
-    chunks.push(chunk);
-  }
-  return Buffer.concat(chunks);
-}
+const MAX_UPLOAD_BYTES = 60 * 1024 * 1024;
 
-async function parseMultipartUpload(req) {
-  const contentType = req.headers["content-type"] || "";
-  const boundary = contentType.match(/boundary=([^;]+)/)?.[1];
-  if (!boundary) {
-    const error = new Error("Multipart boundary is missing.");
-    error.status = 400;
-    throw error;
-  }
-  const raw = (await readRawBody(req)).toString("binary");
-  const parts = raw.split(`--${boundary}`).filter((part) => part.includes("Content-Disposition"));
-  for (const part of parts) {
-    const [headerBlock, ...bodyParts] = part.split("\r\n\r\n");
-    const body = bodyParts.join("\r\n\r\n").replace(/\r\n--$/, "").replace(/\r\n$/, "");
-    const name = headerBlock.match(/name="([^"]+)"/)?.[1];
-    const filename = headerBlock.match(/filename="([^"]*)"/)?.[1];
-    if (name !== "file" || !filename) continue;
-    const mimeType = headerBlock.match(/Content-Type:\s*([^\r\n]+)/i)?.[1] || "application/octet-stream";
-    return { filename, mimeType, buffer: Buffer.from(body, "binary") };
-  }
-  const error = new Error("No media file was uploaded.");
-  error.status = 400;
-  throw error;
+function parseMultipartUpload(req) {
+  return new Promise((resolve, reject) => {
+    const contentType = req.headers["content-type"] || "";
+    if (!contentType.startsWith("multipart/form-data")) {
+      const error = new Error("Expected multipart/form-data.");
+      error.status = 400;
+      return reject(error);
+    }
+    let busboy;
+    try {
+      busboy = Busboy({
+        headers: req.headers,
+        limits: { files: 1, fileSize: MAX_UPLOAD_BYTES, fields: 0 }
+      });
+    } catch (err) {
+      err.status = 400;
+      return reject(err);
+    }
+    let settled = false;
+    let captured = null;
+    const finish = (err, value) => {
+      if (settled) return;
+      settled = true;
+      if (err) reject(err);
+      else resolve(value);
+    };
+    busboy.on("file", (name, stream, info) => {
+      if (name !== "file" || !info?.filename) {
+        stream.resume();
+        return;
+      }
+      const chunks = [];
+      let total = 0;
+      let truncated = false;
+      stream.on("data", (chunk) => {
+        total += chunk.length;
+        if (total > MAX_UPLOAD_BYTES) {
+          truncated = true;
+          return;
+        }
+        chunks.push(chunk);
+      });
+      stream.on("limit", () => { truncated = true; });
+      stream.on("end", () => {
+        if (truncated) {
+          const error = new Error("Upload is too large.");
+          error.status = 413;
+          return finish(error);
+        }
+        captured = {
+          filename: info.filename,
+          mimeType: info.mimeType || "application/octet-stream",
+          buffer: Buffer.concat(chunks)
+        };
+      });
+      stream.on("error", finish);
+    });
+    busboy.on("finish", () => {
+      if (!captured) {
+        const error = new Error("No media file was uploaded.");
+        error.status = 400;
+        return finish(error);
+      }
+      finish(null, captured);
+    });
+    busboy.on("error", finish);
+    req.on("error", finish);
+    req.pipe(busboy);
+  });
 }
 
 async function saveUploadedMedia(req) {
