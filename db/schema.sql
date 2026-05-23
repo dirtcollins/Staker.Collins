@@ -1,5 +1,10 @@
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
+CREATE TABLE IF NOT EXISTS schema_migrations (
+  version TEXT PRIMARY KEY,
+  applied_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 CREATE TABLE IF NOT EXISTS properties (
   id TEXT PRIMARY KEY,
   rank INTEGER,
@@ -176,3 +181,10 @@ CREATE INDEX IF NOT EXISTS idx_prospect_media_property_id ON prospect_media(prop
 CREATE INDEX IF NOT EXISTS idx_prospect_media_created_at ON prospect_media(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_activity_log_property_id ON activity_log(property_id);
 CREATE INDEX IF NOT EXISTS idx_activity_log_created_at ON activity_log(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_properties_acquisition_status ON properties(acquisition_status);
+CREATE INDEX IF NOT EXISTS idx_properties_rank ON properties(rank);
+CREATE INDEX IF NOT EXISTS idx_activity_log_actor_created_at ON activity_log(actor, created_at DESC);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_properties_address_zip ON properties(lower(address), zip);
+
+INSERT INTO schema_migrations (version) VALUES ('20260522_initial') ON CONFLICT DO NOTHING;
+INSERT INTO schema_migrations (version) VALUES ('20260522_indexes_and_unique') ON CONFLICT DO NOTHING;
