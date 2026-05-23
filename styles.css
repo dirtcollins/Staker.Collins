@@ -7966,6 +7966,55 @@ td a {
   }
 }
 
+@media (max-width: 620px) {
+  .owned-vendor-table {
+    display: grid;
+    gap: 12px;
+    border-top: 0;
+  }
+
+  .owned-vendor-header {
+    display: none;
+  }
+
+  .owned-vendor-row {
+    min-width: 0;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 8px 12px;
+    align-items: start;
+    min-height: 0;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 14px;
+  }
+
+  .owned-vendor-row strong {
+    font-size: 15px;
+  }
+
+  .owned-vendor-row > span {
+    grid-column: 1 / -1;
+    color: #4b5870;
+    font-size: 13px;
+  }
+
+  .owned-vendor-row > span:nth-of-type(1) {
+    grid-column: 1;
+    color: #13203a;
+  }
+
+  .owned-vendor-row > span:nth-of-type(4) {
+    color: #263452;
+    font-weight: 700;
+  }
+
+  .owned-vendor-row .vendor-actions {
+    grid-column: 2;
+    grid-row: 1 / span 2;
+    align-self: start;
+  }
+}
+
 .owned-task-toolbar,
 .calendar-topline {
   display: flex;
@@ -8664,6 +8713,46 @@ td a {
   .tasks-summary-card {
     min-height: 74px;
     padding: 14px 16px;
+  }
+
+  .tasks-table-card {
+    overflow: visible;
+  }
+
+  .tasks-table-head {
+    display: none;
+  }
+
+  .tasks-table-row:not(.tasks-table-head) {
+    min-width: 0;
+    grid-template-columns: 28px minmax(0, 1fr) auto;
+    gap: 9px 12px;
+    align-items: start;
+    min-height: 0;
+    padding: 14px;
+  }
+
+  .tasks-name-cell {
+    grid-column: 2 / 4;
+  }
+
+  .tasks-project-cell,
+  .tasks-assignee-cell,
+  .tasks-table-row:not(.tasks-table-head) > div:nth-child(5),
+  .tasks-date-cell,
+  .tasks-table-row:not(.tasks-table-head) > div:nth-child(7) {
+    grid-column: 2 / 4;
+  }
+
+  .tasks-actions-cell {
+    grid-column: 3;
+    grid-row: 1;
+  }
+
+  .tasks-table-footer {
+    align-items: flex-start;
+    flex-direction: column;
+    padding: 14px;
   }
 
   .tasks-tabs {
@@ -9782,6 +9871,11 @@ td a {
 
 .task-redesign-toggle input {
   position: absolute;
+  width: 1px !important;
+  height: 1px !important;
+  min-height: 0 !important;
+  margin: 0;
+  padding: 0;
   opacity: 0;
   pointer-events: none;
 }
@@ -9839,6 +9933,11 @@ td a {
 
 .task-priority-control input {
   position: absolute;
+  width: 1px !important;
+  height: 1px !important;
+  min-height: 0 !important;
+  margin: 0;
+  padding: 0;
   opacity: 0;
   pointer-events: none;
 }
@@ -11266,5 +11365,42 @@ td a {
   .owned-note-list {
     border-right: 0;
     border-bottom: 1px solid var(--line);
+  }
+}
+
+/* ---------------------------------------------------------------------------
+   Mobile polish pass (2026-05-23)
+   - iOS Safari zooms in when an input's computed font-size is < 16px.
+     Body is 15px and form controls inherit it. Bump form controls to 16px
+     at mobile width so focusing a field doesn't zoom the page.
+   - Sidebar drawer items and the modal close button were 36-38px; HIG
+     recommends >= 44px for finger-friendly targets. Bump at mobile only.
+   - Modal padding tightened on narrow screens so the form actually fits.
+   --------------------------------------------------------------------------- */
+@media (max-width: 768px) {
+  input,
+  select,
+  textarea,
+  .modal-field input,
+  .modal-field textarea,
+  .vendor-form-grid input,
+  .vendor-form-grid select,
+  .owned-vendor-search input {
+    font-size: 16px;
+  }
+
+  .nav-item,
+  .nav-section-tab,
+  .modal-close {
+    min-height: 44px;
+  }
+
+  .modal {
+    padding: 18px;
+    border-radius: 14px;
+  }
+
+  .modal-overlay {
+    padding: 10px;
   }
 }
