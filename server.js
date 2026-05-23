@@ -187,6 +187,17 @@ function calculateUnderwriting(input) {
 
 function underwritingToClient(row) {
   if (!row) return null;
+  if (row.property_id == null && row.list_price_cents == null) {
+    return null;
+  }
+  const hasAnyValue = [
+    row.list_price_cents,
+    row.arv_cents,
+    row.rehab_estimate_cents,
+    row.proposed_offer_cents
+  ].some((value) => value != null && Number(value) > 0);
+  const hasNotes = typeof row.notes === "string" && row.notes.trim().length > 0;
+  if (!hasAnyValue && !hasNotes) return null;
   return {
     propertyId: row.property_id,
     listPrice: centsToDollars(row.list_price_cents),
@@ -483,7 +494,21 @@ async function readBody(req) {
   const chunks = [];
   for await (const chunk of req) chunks.push(chunk);
   if (!chunks.length) return {};
-  return JSON.parse(Buffer.concat(chunks).toString("utf8"));
+  const text = Buffer.concat(chunks).toString("utf8");
+  try {
+    const parsed = JSON.parse(text);
+    if (parsed === null || typeof parsed !== "object") {
+      const error = new Error("Request body must be a JSON object.");
+      error.status = 400;
+      throw error;
+    }
+    return parsed;
+  } catch (err) {
+    if (err.status) throw err;
+    const error = new Error("Invalid JSON in request body.");
+    error.status = 400;
+    throw error;
+  }
 }
 
 async function readRawBody(req, maxBytes = 60 * 1024 * 1024) {
@@ -575,6 +600,25 @@ function notFound(res) {
 async function dbQuery(sql, params = []) {
   const result = await pool.query(sql, params);
   return result.rows;
+}
+
+async function withTransaction(fn) {
+  if (useMemory) return fn(null);
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const result = await fn(async (sql, params = []) => {
+      const res = await client.query(sql, params);
+      return res.rows;
+    });
+    await client.query("COMMIT");
+    return result;
+  } catch (err) {
+    try { await client.query("ROLLBACK"); } catch { /* ignore */ }
+    throw err;
+  } finally {
+    client.release();
+  }
 }
 
 function rentCastAddress(property) {
@@ -696,24 +740,32 @@ async function refreshPropertyScore(id, force = false) {
   return persistScore(property, rentcastData);
 }
 
+const inFlightScoreRefresh = new Map();
+
 async function refreshStaleScores(records) {
   if (!process.env.RENTCAST_API_KEY) return;
   for (const record of records) {
     if (!isRentCastStale(record)) continue;
-    try {
-      await refreshPropertyScore(record.id, false);
-    } catch (error) {
-      console.error(`RentCast refresh failed for ${record.id}: ${error.message}`);
-    }
+    if (inFlightScoreRefresh.has(record.id)) continue;
+    const task = (async () => {
+      try {
+        await refreshPropertyScore(record.id, false);
+      } catch (error) {
+        console.error(`RentCast refresh failed for ${record.id}: ${error.message}`);
+      } finally {
+        inFlightScoreRefresh.delete(record.id);
+      }
+    })();
+    inFlightScoreRefresh.set(record.id, task);
   }
 }
 
 async function listProperties() {
   if (useMemory) {
-    await refreshStaleScores(memory.properties);
+    refreshStaleScores(memory.properties);
     return memory.properties.map(toClientProperty);
   }
-  let rows = await dbQuery(`
+  const rows = await dbQuery(`
     SELECT p.*, ds.score AS deal_score, ds.profit_margin_score, ds.rehab_risk_score,
       ds.arv_confidence_score, ds.market_momentum_score, ds.seller_motivation_score, ds.score_breakdown,
       to_jsonb(us.*) AS underwriting_snapshot
@@ -722,18 +774,7 @@ async function listProperties() {
     LEFT JOIN underwriting_snapshots us ON us.property_id = p.id
     ORDER BY COALESCE(ds.score, 0) DESC, p.rank ASC
   `);
-  await refreshStaleScores(rows);
-  if (process.env.RENTCAST_API_KEY && rows.some(isRentCastStale)) {
-    rows = await dbQuery(`
-      SELECT p.*, ds.score AS deal_score, ds.profit_margin_score, ds.rehab_risk_score,
-        ds.arv_confidence_score, ds.market_momentum_score, ds.seller_motivation_score, ds.score_breakdown,
-        to_jsonb(us.*) AS underwriting_snapshot
-      FROM properties p
-      LEFT JOIN deal_scores ds ON ds.property_id = p.id
-      LEFT JOIN underwriting_snapshots us ON us.property_id = p.id
-      ORDER BY COALESCE(ds.score, 0) DESC, p.rank ASC
-    `);
-  }
+  refreshStaleScores(rows);
   return rows.map(toClientProperty);
 }
 
@@ -892,21 +933,24 @@ async function updatePropertyStatus(id, status, quickSummary) {
     await writeActivity(id, "property.status_updated", { status: property.acquisition_status }, "Team");
     return toClientProperty(property);
   }
-  const rows = await dbQuery(`
-    UPDATE properties
-    SET acquisition_status = COALESCE($2, acquisition_status),
-        quick_summary = COALESCE($3, quick_summary),
-        updated_at = now()
-    WHERE id = $1
-    RETURNING *
-  `, [id, status ? normalizeStage(status) : null, quickSummary ?? null]);
-  if (status) {
-    await dbQuery(`
-      INSERT INTO pipeline_stages (property_id, stage)
-      VALUES ($1, $2)
-      ON CONFLICT (property_id) DO UPDATE SET stage = EXCLUDED.stage, updated_at = now()
-    `, [id, normalizeStage(status)]);
-  }
+  const rows = await withTransaction(async (tx) => {
+    const updated = await tx(`
+      UPDATE properties
+      SET acquisition_status = COALESCE($2, acquisition_status),
+          quick_summary = COALESCE($3, quick_summary),
+          updated_at = now()
+      WHERE id = $1
+      RETURNING *
+    `, [id, status ? normalizeStage(status) : null, quickSummary ?? null]);
+    if (status) {
+      await tx(`
+        INSERT INTO pipeline_stages (property_id, stage)
+        VALUES ($1, $2)
+        ON CONFLICT (property_id) DO UPDATE SET stage = EXCLUDED.stage, updated_at = now()
+      `, [id, normalizeStage(status)]);
+    }
+    return updated;
+  });
   await writeActivity(id, "property.status_updated", { status: status ? normalizeStage(status) : null }, "Team");
   return rows[0] ? toClientProperty(rows[0]) : null;
 }
@@ -947,55 +991,57 @@ async function saveUnderwriting(propertyIdValue, body) {
       target_offer_low: Math.round(snapshot.calculation.recommendedMaxOffer * 0.95)
     });
   } else {
-    await dbQuery(`
-      INSERT INTO underwriting_snapshots (
-        property_id, list_price_cents, arv_cents, rehab_estimate_cents, proposed_offer_cents,
-        closing_costs_cents, holding_costs_cents, financing_cost_cents, selling_cost_cents,
-        target_profit_cents, contingency_cents, calculation, notes, created_by
-      )
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
-      ON CONFLICT (property_id) DO UPDATE SET
-        list_price_cents = EXCLUDED.list_price_cents,
-        arv_cents = EXCLUDED.arv_cents,
-        rehab_estimate_cents = EXCLUDED.rehab_estimate_cents,
-        proposed_offer_cents = EXCLUDED.proposed_offer_cents,
-        closing_costs_cents = EXCLUDED.closing_costs_cents,
-        holding_costs_cents = EXCLUDED.holding_costs_cents,
-        financing_cost_cents = EXCLUDED.financing_cost_cents,
-        selling_cost_cents = EXCLUDED.selling_cost_cents,
-        target_profit_cents = EXCLUDED.target_profit_cents,
-        contingency_cents = EXCLUDED.contingency_cents,
-        calculation = EXCLUDED.calculation,
-        notes = EXCLUDED.notes,
-        created_by = EXCLUDED.created_by,
-        updated_at = now()
-    `, [
-      snapshot.property_id,
-      snapshot.list_price_cents,
-      snapshot.arv_cents,
-      snapshot.rehab_estimate_cents,
-      snapshot.proposed_offer_cents,
-      snapshot.closing_costs_cents,
-      snapshot.holding_costs_cents,
-      snapshot.financing_cost_cents,
-      snapshot.selling_cost_cents,
-      snapshot.target_profit_cents,
-      snapshot.contingency_cents,
-      JSON.stringify(snapshot.calculation),
-      snapshot.notes,
-      snapshot.created_by
-    ]);
-    await dbQuery(`
-      UPDATE properties
-      SET target_offer_high = $2,
-          target_offer_low = $3,
+    await withTransaction(async (tx) => {
+      await tx(`
+        INSERT INTO underwriting_snapshots (
+          property_id, list_price_cents, arv_cents, rehab_estimate_cents, proposed_offer_cents,
+          closing_costs_cents, holding_costs_cents, financing_cost_cents, selling_cost_cents,
+          target_profit_cents, contingency_cents, calculation, notes, created_by
+        )
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+        ON CONFLICT (property_id) DO UPDATE SET
+          list_price_cents = EXCLUDED.list_price_cents,
+          arv_cents = EXCLUDED.arv_cents,
+          rehab_estimate_cents = EXCLUDED.rehab_estimate_cents,
+          proposed_offer_cents = EXCLUDED.proposed_offer_cents,
+          closing_costs_cents = EXCLUDED.closing_costs_cents,
+          holding_costs_cents = EXCLUDED.holding_costs_cents,
+          financing_cost_cents = EXCLUDED.financing_cost_cents,
+          selling_cost_cents = EXCLUDED.selling_cost_cents,
+          target_profit_cents = EXCLUDED.target_profit_cents,
+          contingency_cents = EXCLUDED.contingency_cents,
+          calculation = EXCLUDED.calculation,
+          notes = EXCLUDED.notes,
+          created_by = EXCLUDED.created_by,
           updated_at = now()
-      WHERE id = $1
-    `, [
-      propertyIdValue,
-      Math.round(snapshot.calculation.recommendedMaxOffer),
-      Math.round(snapshot.calculation.recommendedMaxOffer * 0.95)
-    ]);
+      `, [
+        snapshot.property_id,
+        snapshot.list_price_cents,
+        snapshot.arv_cents,
+        snapshot.rehab_estimate_cents,
+        snapshot.proposed_offer_cents,
+        snapshot.closing_costs_cents,
+        snapshot.holding_costs_cents,
+        snapshot.financing_cost_cents,
+        snapshot.selling_cost_cents,
+        snapshot.target_profit_cents,
+        snapshot.contingency_cents,
+        JSON.stringify(snapshot.calculation),
+        snapshot.notes,
+        snapshot.created_by
+      ]);
+      await tx(`
+        UPDATE properties
+        SET target_offer_high = $2,
+            target_offer_low = $3,
+            updated_at = now()
+        WHERE id = $1
+      `, [
+        propertyIdValue,
+        Math.round(snapshot.calculation.recommendedMaxOffer),
+        Math.round(snapshot.calculation.recommendedMaxOffer * 0.95)
+      ]);
+    });
   }
   await writeActivity(propertyIdValue, "underwriting.saved", {
     recommendedMaxOffer: snapshot.calculation.recommendedMaxOffer,
