@@ -605,6 +605,14 @@ function parseMultipartUpload(req) {
   });
 }
 
+const blobToken = process.env.BLOB_READ_WRITE_TOKEN || "";
+const useBlobStorage = Boolean(blobToken);
+let blobPutPromise = null;
+function loadBlobPut() {
+  if (!blobPutPromise) blobPutPromise = import("@vercel/blob").then((m) => m.put);
+  return blobPutPromise;
+}
+
 async function saveUploadedMedia(req) {
   const file = await parseMultipartUpload(req);
   if (!file.mimeType.startsWith("image/") && !file.mimeType.startsWith("video/")) {
@@ -623,14 +631,28 @@ async function saveUploadedMedia(req) {
   };
   const ext = extensionFromMime[file.mimeType] || extname(file.filename).toLowerCase() || ".bin";
   const safeName = `${randomUUID()}${ext}`;
-  if (isVercel) {
+  if (useBlobStorage) {
+    const put = await loadBlobPut();
+    const result = await put(`media/${safeName}`, file.buffer, {
+      access: "public",
+      contentType: file.mimeType,
+      token: blobToken
+    });
     return {
-      url: `data:${file.mimeType};base64,${file.buffer.toString("base64")}`,
+      url: result.url,
       filename: safeName,
       originalName: file.filename,
       mimeType: file.mimeType,
       size: file.buffer.length
     };
+  }
+  if (isVercel) {
+    const error = new Error(
+      "Media uploads require BLOB_READ_WRITE_TOKEN in this environment. " +
+      "Provision Vercel Blob (or another object store) and set the token."
+    );
+    error.status = 503;
+    throw error;
   }
   await mkdir(mediaUploadDir, { recursive: true });
   await writeFile(join(mediaUploadDir, safeName), file.buffer);
