@@ -17,6 +17,8 @@ const fallbackAssumptions = (property) => ({
   rehab: property.rehab || (priorityAddresses.has(property.address) ? 55000 : 35000)
 });
 
+const dollarsToCents = (value) => Math.round(Number(value || 0) * 100);
+
 const scoreProperty = (property) => {
   const scoring = calculateDealScore({ ...property, ...fallbackAssumptions(property) });
   const category = (key) => scoring.categories.find((item) => item.key === key)?.score || 0;
@@ -69,7 +71,7 @@ try {
 
     await pool.query(`
       INSERT INTO properties (
-        id, rank, address, city, state, zip, list_price, target_offer_low, target_offer_high,
+        id, rank, address, city, state, zip, list_price_cents, target_offer_low_cents, target_offer_high_cents,
         listing_agent, brokerage, phone, why, priority, verification_status, acquisition_status,
         property_phase, main_photo, source
       )
@@ -80,9 +82,9 @@ try {
         city = EXCLUDED.city,
         state = EXCLUDED.state,
         zip = EXCLUDED.zip,
-        list_price = EXCLUDED.list_price,
-        target_offer_low = EXCLUDED.target_offer_low,
-        target_offer_high = EXCLUDED.target_offer_high,
+        list_price_cents = EXCLUDED.list_price_cents,
+        target_offer_low_cents = EXCLUDED.target_offer_low_cents,
+        target_offer_high_cents = EXCLUDED.target_offer_high_cents,
         listing_agent = EXCLUDED.listing_agent,
         brokerage = EXCLUDED.brokerage,
         phone = EXCLUDED.phone,
@@ -99,9 +101,9 @@ try {
       property.city,
       property.state,
       property.zip,
-      property.listPrice,
-      property.targetOfferLow,
-      property.targetOfferHigh,
+      dollarsToCents(property.listPrice),
+      dollarsToCents(property.targetOfferLow),
+      dollarsToCents(property.targetOfferHigh),
       property.listingAgent,
       property.brokerage,
       property.phone,
