@@ -43,6 +43,20 @@ if (!process.env.DATABASE_URL) {
   throw new Error("DATABASE_URL is required to seed PostgreSQL.");
 }
 
+const isProduction = process.env.NODE_ENV === "production";
+const allowOverwrite = process.env.SEED_ALLOW_OVERWRITE === "1";
+if (isProduction && !allowOverwrite) {
+  throw new Error(
+    "Refusing to run seed against NODE_ENV=production without " +
+    "SEED_ALLOW_OVERWRITE=1. Seeding overwrites rank, prices, offers, " +
+    "verification_status, source JSONB, and deal_scores rows for every " +
+    "address in flip-targets.json — including manual team edits."
+  );
+}
+if (allowOverwrite) {
+  console.warn("[seed] SEED_ALLOW_OVERWRITE=1 — running destructive upsert.");
+}
+
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 const seed = JSON.parse(await readFile(new URL("../data/flip-targets.json", import.meta.url), "utf8"));
 

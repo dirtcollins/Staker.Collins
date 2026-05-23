@@ -2,7 +2,7 @@ import "dotenv/config";
 import { createServer } from "node:http";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { createReadStream, existsSync } from "node:fs";
-import { dirname, extname, join, normalize } from "node:path";
+import { dirname, extname, isAbsolute, join, normalize, relative as relativePath } from "node:path";
 import { randomUUID } from "node:crypto";
 import pg from "pg";
 import { calculateDealScore } from "./lib/deal-scoring.js";
@@ -10,12 +10,29 @@ import { calculateDealScore } from "./lib/deal-scoring.js";
 const { Pool } = pg;
 const root = process.cwd();
 const port = Number(process.env.PORT || 3000);
-const useMemory = process.env.MEMORY_DB === "1" || !process.env.DATABASE_URL;
+const isVercel = process.env.VERCEL === "1";
+const explicitMemory = process.env.MEMORY_DB === "1";
+const hasDatabaseUrl = Boolean(process.env.DATABASE_URL);
+const useMemory = explicitMemory || !hasDatabaseUrl;
+
+if (isVercel && useMemory) {
+  throw new Error(
+    "Refusing to start: MEMORY_DB mode on Vercel will silently lose chat " +
+    "messages and uploads (read-only filesystem outside /tmp). Set " +
+    "DATABASE_URL to a Postgres connection string in Vercel project env vars."
+  );
+}
+if (process.env.NODE_ENV === "production" && useMemory && !explicitMemory) {
+  throw new Error(
+    "Refusing to start: NODE_ENV=production without DATABASE_URL. " +
+    "Set DATABASE_URL, or set MEMORY_DB=1 explicitly to opt into demo mode."
+  );
+}
+
 const pool = useMemory ? null : new Pool({ connectionString: process.env.DATABASE_URL });
 const runtimeChatPath = join(root, "data/runtime-chat-messages.json");
 const runtimeProspectMediaPath = join(root, "data/runtime-prospect-media.json");
 const mediaUploadDir = join(root, "uploads/media");
-const isVercel = process.env.VERCEL === "1";
 
 const TEAM = [
   { name: "Ashton Staker", phone: "9314502979", role: "owner" },
@@ -1551,12 +1568,28 @@ async function api(req, res, pathname) {
   notFound(res);
 }
 
+const STATIC_ALLOWED_EXTENSIONS = new Set(Object.keys(mime));
+
 function serveStatic(req, res, pathname) {
   const target = pathname === "/" ? "/index.html" : pathname;
-  const safePath = normalize(target).replace(/^(\.\.[/\\])+/, "");
-  const filePath = join(root, safePath);
-  if (!filePath.startsWith(root) || !existsSync(filePath)) return notFound(res);
-  res.writeHead(200, { "content-type": mime[extname(filePath)] || "application/octet-stream" });
+  let decoded;
+  try {
+    decoded = decodeURIComponent(target);
+  } catch {
+    return notFound(res);
+  }
+  if (decoded.includes("\0")) return notFound(res);
+  const segments = decoded.split(/[/\\]+/).filter(Boolean);
+  if (segments.some((segment) => segment === ".." || segment.startsWith("."))) {
+    return notFound(res);
+  }
+  const filePath = join(root, ...segments);
+  const relative = relativePath(root, filePath);
+  if (relative.startsWith("..") || isAbsolute(relative)) return notFound(res);
+  const ext = extname(filePath).toLowerCase();
+  if (!STATIC_ALLOWED_EXTENSIONS.has(ext)) return notFound(res);
+  if (!existsSync(filePath)) return notFound(res);
+  res.writeHead(200, { "content-type": mime[ext] || "application/octet-stream" });
   createReadStream(filePath).pipe(res);
 }
 
