@@ -6,6 +6,7 @@ import { dirname, extname, isAbsolute, join, normalize, relative as relativePath
 import { randomUUID } from "node:crypto";
 import pg from "pg";
 import Busboy from "busboy";
+import { verifyToken } from "@clerk/backend";
 import { calculateDealScore } from "./lib/deal-scoring.js";
 
 const { Pool } = pg;
@@ -27,6 +28,25 @@ if (process.env.NODE_ENV === "production" && useMemory && !explicitMemory) {
   throw new Error(
     "Refusing to start: NODE_ENV=production without DATABASE_URL. " +
     "Set DATABASE_URL, or set MEMORY_DB=1 explicitly to opt into demo mode."
+  );
+}
+
+const clerkSecretKey = process.env.CLERK_SECRET_KEY || "";
+const clerkConfigured = Boolean(clerkSecretKey);
+// In memory mode, the app runs as a local demo and skips auth checks.
+// Production paths (Vercel, NODE_ENV=production) enforce auth via the
+// fail-fast guards below — useMemory cannot be true there.
+const authBypass = useMemory;
+if (process.env.NODE_ENV === "production" && !clerkConfigured) {
+  throw new Error(
+    "Refusing to start: NODE_ENV=production without CLERK_SECRET_KEY. " +
+    "All /api/* mutations would be unauthenticated."
+  );
+}
+if (isVercel && !clerkConfigured) {
+  throw new Error(
+    "Refusing to start: Vercel deploy without CLERK_SECRET_KEY. " +
+    "Set it in Vercel project env vars."
   );
 }
 
@@ -630,6 +650,62 @@ function send(res, status, payload) {
 
 function notFound(res) {
   send(res, 404, { error: "Not found" });
+}
+
+function parseCookies(header) {
+  const out = {};
+  if (!header) return out;
+  for (const part of String(header).split(";")) {
+    const eq = part.indexOf("=");
+    if (eq < 0) continue;
+    const key = part.slice(0, eq).trim();
+    if (!key) continue;
+    out[key] = decodeURIComponent(part.slice(eq + 1).trim());
+  }
+  return out;
+}
+
+function extractSessionToken(req) {
+  const auth = req.headers["authorization"];
+  if (auth && auth.startsWith("Bearer ")) return auth.slice(7).trim();
+  const cookies = parseCookies(req.headers["cookie"]);
+  return cookies["__session"] || cookies["__clerk_db_jwt"] || null;
+}
+
+const PUBLIC_PATHS = new Set(["/api/health", "/api/login"]);
+const AUTH_REQUIRED_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
+
+async function authenticate(req, pathname) {
+  if (PUBLIC_PATHS.has(pathname)) return { actor: "Public", authenticated: false };
+  if (authBypass) {
+    return { actor: "Dev", authenticated: false, dev: true };
+  }
+  const token = extractSessionToken(req);
+  if (!token) {
+    const error = new Error("Authentication required.");
+    error.status = 401;
+    throw error;
+  }
+  try {
+    const claims = await verifyToken(token, { secretKey: clerkSecretKey });
+    const actor = claims?.name || claims?.email || claims?.sub || "User";
+    return { actor, authenticated: true, claims };
+  } catch (err) {
+    const error = new Error("Invalid or expired session.");
+    error.status = 401;
+    throw error;
+  }
+}
+
+function requireAuthForMutation(method, pathname, authState) {
+  if (!AUTH_REQUIRED_METHODS.has(method)) return;
+  if (PUBLIC_PATHS.has(pathname)) return;
+  if (authBypass) return;
+  if (!authState?.authenticated) {
+    const error = new Error("Authentication required for this operation.");
+    error.status = 401;
+    throw error;
+  }
 }
 
 async function dbQuery(sql, params = []) {
@@ -1302,7 +1378,17 @@ function listByProperty(collection, propertyIdValue) {
 }
 
 async function api(req, res, pathname) {
+  const authState = await authenticate(req, pathname);
+  requireAuthForMutation(req.method, pathname, authState);
+  req.authActor = authState.actor;
+  req.authState = authState;
+
   if (pathname === "/api/login" && req.method === "POST") {
+    if (!authBypass) {
+      return send(res, 410, {
+        error: "Legacy login is disabled. Sign in via Clerk."
+      });
+    }
     const body = await readBody(req);
     const digits = (s) => (s || "").replace(/\D/g, "");
     const match = TEAM.find(
@@ -1312,7 +1398,7 @@ async function api(req, res, pathname) {
     return send(res, 200, { ok: true, name: match.name, role: match.role });
   }
 
-  if (pathname === "/api/health") return send(res, 200, { ok: true, database: useMemory ? "memory" : "postgres" });
+  if (pathname === "/api/health") return send(res, 200, { ok: true, database: useMemory ? "memory" : "postgres", auth: clerkConfigured ? "clerk" : "bypass" });
   if (pathname === "/api/uploads/media" && req.method === "POST") {
     try {
       return send(res, 201, { upload: await saveUploadedMedia(req) });
